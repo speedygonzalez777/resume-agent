@@ -1,65 +1,54 @@
-# TODO — Resume Tailoring Agent
+# TODO - Resume Tailoring Agent
 
-## Aktualny focus
-Obecnie pracujemy nad:
-- [ ] uporządkowaniem `match_service.py`
-- [ ] zwracaniem `MatchResult` i `RequirementMatch` zamiast zwykłego słownika
-- [ ] przygotowaniem repo pod pierwsze zadanie dla Codexa
+## Zrobione
+- [x] Utworzyc backend FastAPI z modelami domenowymi MVP
+- [x] Dodac `POST /profile/validate`
+- [x] Dodac `POST /job/validate`
+- [x] Dodac `POST /match/analyze`
+- [x] Uporzadkowac matching tak, aby `/match/analyze` zwracal `MatchResult` i `RequirementMatch`
+- [x] Dodac explainability dla `RequirementMatch`
+- [x] Dodac URL-first parser ofert pracy `POST /job/parse-url`
+- [x] Dodac jawne bledy parsera ofert:
+  - `fetch_failed`
+  - `page_content_too_poor`
+  - `ai_parsing_failed`
+  - `parsed_result_incomplete`
+- [x] Dodac HTTP-first fetch i lokalny browser fallback dla trudniejszych stron
+- [x] Dodac minimalna lokalna persystencje SQLite w `app/db`
+- [x] Ustawic domyslna baze na `data/resume_agent.db`
+- [x] Wywolywac `init_db()` jawnie przy starcie aplikacji
+- [x] Trzymac `CandidateProfile`, `JobPosting` i `MatchResult` jako JSON w SQLite
+- [x] Dodac endpointy persystencji:
+  - `POST /profile/save`
+  - `GET /profile/{profile_id}`
+  - `POST /job/save`
+  - `GET /job`
+  - `GET /job/{job_posting_id}`
+  - `POST /match/save`
+  - `GET /match`
+  - `GET /match/{match_result_id}`
+- [x] Dodac testy endpointow i persystencji na tymczasowej SQLite
 
-## Etap 1 — uporządkowanie backendu MVP
-- [x] Utworzyć strukturę projektu
-- [x] Dodać modele Pydantic dla kandydata
-- [x] Dodać modele Pydantic dla oferty pracy
-- [x] Dodać modele Pydantic dla matchingu
-- [x] Dodać modele Pydantic dla resume
-- [x] Dodać endpoint `/profile/validate`
-- [x] Dodać endpoint `/job/validate`
-- [x] Dodać endpoint `/match/analyze`
-- [x] Dodać testowe pliki JSON do walidacji
+## Aktualny stan
+- [x] Routery pozostaja cienkie, a logika jest w `app/services`
+- [x] Modele domenowe w `app/models` nie zostaly przebudowane pod ORM
+- [x] `parse-url` i `match/analyze` nie maja ukrytych side-effectow zapisu
+- [x] Baza lokalna jest ignorowana przez git (`data/*.db`)
+- [x] Backend jest przygotowany pod przyszly frontend przez proste endpointy zapisu i odczytu
 
-## Etap 2 — uporządkowanie wyników matchingu
-- [ ] Przerobić `match_service.py`, aby zwracał `MatchResult` zamiast zwykłego słownika
-- [ ] Przerobić wyniki pojedynczych wymagań na `RequirementMatch`
-- [ ] Uporządkować logikę `matched / partial / missing`
-- [ ] Dodać prosty test dla `match_service.py`
-- [ ] Sprawdzić, czy endpoint `/match/analyze` zwraca poprawną strukturę modelu
+## Najblizsze kroki
+- [ ] Dodac `GET /profile` do listowania zapisanych profili, jesli bedzie potrzebny frontendowi
+- [ ] Zdecydowac, czy frontend ma zapisywac wynik `parse-url` i `match/analyze` jawnie po stronie UI, czy przez dodatkowy backend flow
+- [ ] Dopracowac heurystyki parsera ofert dla dynamicznych portali
+- [ ] Dodac AI matching jako osobna warstwe obok prostego keyword matchera
+- [ ] Przygotowac pierwsza wersje `ResumeDraft`
+- [ ] Przygotowac pierwsza wersje `ChangeReport`
 
-## Etap 3 — integracja AI do analizy ofert
-- [ ] Dodać plik `AGENTS.md`
-- [ ] Przygotować serwis OpenAI do komunikacji z modelem
-- [ ] Dodać parser surowej oferty pracy do modelu `JobPosting`
-- [ ] Dodać endpoint `/job/parse`
-- [ ] Przygotować prompt do parsowania ofert pracy
-- [ ] Przetestować parsowanie na 2–3 realnych ofertach
-
-## Etap 4 — integracja AI do dopasowania profilu
-- [ ] Dodać wersję AI dla analizy dopasowania profilu do oferty
-- [ ] Porównać wynik AI z prostym matcherem keywordowym
-- [ ] Dodać uzasadnienia dla każdego wymagania
-- [ ] Dodać bezpieczniki przeciw halucynacjom
-
-## Etap 5 — generowanie treści CV
-- [ ] Dodać serwis generujący `ResumeDraft`
-- [ ] Przygotować prompt do generowania draftu CV
-- [ ] Dopilnować, żeby `professional_summary` było opcjonalne
-- [ ] Dodać raport zmian `ChangeReport`
-
-## Etap 6 — eksport dokumentów
-- [ ] Przygotować szablon DOCX
-- [ ] Dodać wypełnianie szablonu na podstawie `ResumeDraft`
-- [ ] Wygenerować pierwszy testowy plik DOCX
-- [ ] Sprawdzić, czy dokument da się wygodnie ręcznie edytować
-
-## Etap 7 — UI
-- [ ] Zdecydować, czy UI będzie w Streamlit czy w prostym frontendzie webowym
-- [ ] Dodać prosty formularz: profil + oferta
-- [ ] Dodać podgląd wyniku matchingu
-- [ ] Dodać przycisk generowania draftu CV
-- [ ] Dodać pobieranie DOCX
-
-## Etap 8 — porządki i portfolio
-- [ ] Dodać README z instrukcją uruchomienia
-- [ ] Uporządkować strukturę repo
-- [ ] Dodać przykładowe dane testowe
-- [ ] Opisać architekturę projektu do portfolio
-- [ ] Przygotować demo projektu
+## Poza zakresem tego etapu
+- [ ] frontend / UI
+- [ ] Docker
+- [ ] Postgres
+- [ ] n8n
+- [ ] pelna historia uruchomien
+- [ ] `GenerationRun`
+- [ ] duza przebudowa architektury
