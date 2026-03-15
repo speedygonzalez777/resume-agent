@@ -1,0 +1,189 @@
+{
+  "candidate_profile": {
+    "personal_info": {
+      "full_name": "Filip Kolęda",
+      "email": "filip@example.com",
+      "phone": "+48 123 456 789",
+      "linkedin_url": "https://www.linkedin.com/in/filipkoleda",
+      "github_url": "https://github.com/filipkoleda",
+      "portfolio_url": "https://filipkoleda.dev",
+      "location": "Gdańsk, Poland"
+    },
+    "target_roles": [
+      "Automation Engineer",
+      "PLC Programmer",
+      "Junior Robotics Engineer"
+    ],
+    "professional_summary_base": "Automation and robotics student with hands-on experience in industrial control, electrical systems, embedded projects and technical documentation.",
+    "experience_entries": [
+      {
+        "id": "exp_001",
+        "company_name": "ABC Automation",
+        "position_title": "Junior Automation Intern",
+        "start_date": "2024-06",
+        "end_date": "2024-09",
+        "is_current": false,
+        "location": "Gdańsk, Poland",
+        "responsibilities": [
+          "Assisted in PLC-related automation tasks",
+          "Prepared technical documentation",
+          "Supported commissioning and testing activities"
+        ],
+        "achievements": [
+          "Improved documentation consistency for control cabinet work",
+          "Supported testing of automation components in workshop conditions"
+        ],
+        "technologies_used": [
+          "PLC",
+          "TIA Portal",
+          "EPLAN"
+        ],
+        "keywords": [
+          "automation",
+          "commissioning",
+          "technical documentation"
+        ]
+      }
+    ],
+    "project_entries": [
+      {
+        "id": "proj_001",
+        "project_name": "Hexapod Robot",
+        "role": "Designer and developer",
+        "description": "Designed and developed a custom hexapod robot as an engineering project.",
+        "technologies_used": [
+          "Arduino",
+          "Python",
+          "Embedded Systems",
+          "Robotics"
+        ],
+        "outcomes": [
+          "Built a functional robotic prototype",
+          "Prepared technical documentation and testing materials"
+        ],
+        "keywords": [
+          "robotics",
+          "embedded",
+          "control systems"
+        ],
+        "link": "https://github.com/filipkoleda/hexapod"
+      }
+    ],
+    "skill_entries": [
+      {
+        "name": "Python",
+        "category": "programming_language",
+        "level": "intermediate",
+        "years_of_experience": 2,
+        "evidence_sources": [
+          "proj_001"
+        ],
+        "aliases": [
+          "python3"
+        ]
+      },
+      {
+        "name": "TIA Portal",
+        "category": "automation_tool",
+        "level": "beginner",
+        "years_of_experience": 1,
+        "evidence_sources": [
+          "exp_001"
+        ],
+        "aliases": []
+      }
+    ],
+    "education_entries": [
+      {
+        "institution_name": "Gdańsk University of Technology",
+        "degree": "Engineer",
+        "field_of_study": "Automation and Robotics",
+        "start_date": "2021-10",
+        "end_date": null,
+        "is_current": true
+      }
+    ],
+    "language_entries": [
+      {
+        "language_name": "Polish",
+        "proficiency_level": "native"
+      },
+      {
+        "language_name": "English",
+        "proficiency_level": "B2"
+      }
+    ],
+    "certificate_entries": [
+      {
+        "certificate_name": "SEP up to 1kV",
+        "issuer": "SEP",
+        "issue_date": "2024-05",
+        "notes": "Electrical qualifications up to 1kV"
+      }
+    ],
+    "immutable_rules": {
+      "forbidden_skills": [
+        "C++",
+        "AWS"
+      ],
+      "forbidden_claims": [
+        "5+ years of commercial experience",
+        "Senior-level PLC programming"
+      ],
+      "forbidden_certificates": [
+        "PMP"
+      ],
+      "editing_rules": [
+        "Do not invent technologies",
+        "Do not exaggerate years of experience",
+        "Do not add unsupported certificates"
+      ]
+    }
+  },
+  "job_posting": {
+    "source": "manual",
+    "title": "Junior Automation Engineer",
+    "company_name": "Example Automation",
+    "location": "Gdańsk, Poland",
+    "work_mode": "onsite",
+    "employment_type": "uop",
+    "seniority_level": "junior",
+    "role_summary": "Entry-level role in industrial automation and control systems.",
+    "responsibilities": [
+      "Support PLC programming tasks",
+      "Prepare technical documentation",
+      "Assist in commissioning and testing"
+    ],
+    "requirements": [
+      {
+        "id": "req_001",
+        "text": "Basic knowledge of PLC systems",
+        "category": "technology",
+        "requirement_type": "must_have",
+        "importance": "high",
+        "extracted_keywords": [
+          "PLC",
+          "automation"
+        ]
+      },
+      {
+        "id": "req_002",
+        "text": "English at communicative level",
+        "category": "language",
+        "requirement_type": "must_have",
+        "importance": "medium",
+        "extracted_keywords": [
+          "English",
+          "communication"
+        ]
+      }
+    ],
+    "keywords": [
+      "PLC",
+      "automation",
+      "technical documentation",
+      "commissioning"
+    ],
+    "language_of_offer": "en"
+  }
+}

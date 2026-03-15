@@ -1,0 +1,46 @@
+{
+  "source": "manual",
+  "title": "Junior Automation Engineer",
+  "company_name": "Example Automation",
+  "location": "Gdańsk, Poland",
+  "work_mode": "onsite",
+  "employment_type": "uop",
+  "seniority_level": "junior",
+  "role_summary": "Entry-level role in industrial automation and control systems.",
+  "responsibilities": [
+    "Support PLC programming tasks",
+    "Prepare technical documentation",
+    "Assist in commissioning and testing"
+  ],
+  "requirements": [
+    {
+      "id": "req_001",
+      "text": "Basic knowledge of PLC systems",
+      "category": "technology",
+      "requirement_type": "must_have",
+      "importance": "high",
+      "extracted_keywords": [
+        "PLC",
+        "automation"
+      ]
+    },
+    {
+      "id": "req_002",
+      "text": "English at communicative level",
+      "category": "language",
+      "requirement_type": "must_have",
+      "importance": "medium",
+      "extracted_keywords": [
+        "English",
+        "communication"
+      ]
+    }
+  ],
+  "keywords": [
+    "PLC",
+    "automation",
+    "technical documentation",
+    "commissioning"
+  ],
+  "language_of_offer": "en"
+}
