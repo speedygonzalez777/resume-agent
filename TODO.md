@@ -18,34 +18,34 @@
 - [x] Ustawic domyslna baze na `data/resume_agent.db`
 - [x] Wywolywac `init_db()` jawnie przy starcie aplikacji
 - [x] Trzymac `CandidateProfile`, `JobPosting` i `MatchResult` jako JSON w SQLite
-- [x] Dodac endpointy persystencji:
-  - `POST /profile/save`
-  - `GET /profile/{profile_id}`
-  - `POST /job/save`
-  - `GET /job`
-  - `GET /job/{job_posting_id}`
-  - `POST /match/save`
-  - `GET /match`
-  - `GET /match/{match_result_id}`
+- [x] Dodac endpointy persystencji dla profili, ofert i wynikow matchingu
 - [x] Dodac testy endpointow i persystencji na tymczasowej SQLite
+- [x] Dodac minimalny frontend React + Vite dla flow `health -> parse-url -> save`
+- [x] Dodac CORS dla lokalnego frontendu (`localhost:5173`)
 
 ## Aktualny stan
-- [x] Routery pozostaja cienkie, a logika jest w `app/services`
+- [x] Routery backendowe pozostaja cienkie, a logika jest w `app/services`
 - [x] Modele domenowe w `app/models` nie zostaly przebudowane pod ORM
 - [x] `parse-url` i `match/analyze` nie maja ukrytych side-effectow zapisu
 - [x] Baza lokalna jest ignorowana przez git (`data/*.db`)
-- [x] Backend jest przygotowany pod przyszly frontend przez proste endpointy zapisu i odczytu
+- [x] Frontend MVP jest cienka warstwa UI nad istniejacym API
+- [x] Frontend umozliwia:
+  - health check backendu
+  - parsowanie oferty po URL
+  - podglad `JobPosting`
+  - zapis oferty do SQLite
 
 ## Najblizsze kroki
 - [ ] Dodac `GET /profile` do listowania zapisanych profili, jesli bedzie potrzebny frontendowi
-- [ ] Zdecydowac, czy frontend ma zapisywac wynik `parse-url` i `match/analyze` jawnie po stronie UI, czy przez dodatkowy backend flow
 - [ ] Dopracowac heurystyki parsera ofert dla dynamicznych portali
 - [ ] Dodac AI matching jako osobna warstwe obok prostego keyword matchera
+- [ ] Dodac prosty UI dla profilu kandydata
+- [ ] Dodac prosty UI dla matchingu
 - [ ] Przygotowac pierwsza wersje `ResumeDraft`
 - [ ] Przygotowac pierwsza wersje `ChangeReport`
 
 ## Poza zakresem tego etapu
-- [ ] frontend / UI
+- [ ] duzy frontend z routingiem i wieloma widokami
 - [ ] Docker
 - [ ] Postgres
 - [ ] n8n

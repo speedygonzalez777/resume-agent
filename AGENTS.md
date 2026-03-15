@@ -1,25 +1,27 @@
-﻿# AGENTS.md
+# AGENTS.md
 
-To repo to lokalny backend FastAPI do dopasowywania CV do ofert pracy.
+To repo to lokalny system MVP do dopasowywania CV do ofert pracy.
 
 Aktualna architektura:
 - `app/models` zawiera modele domenowe Pydantic
-- `app/services` zawiera logike biznesowa
-- `app/api` zawiera cienkie routery
+- `app/services` zawiera logike biznesowa backendu
+- `app/api` zawiera cienkie routery FastAPI
 - `app/db` zawiera lokalna persystencje SQLite oparta o SQLAlchemy
+- `frontend/` zawiera minimalny React + Vite UI na localhost
 - fizyczny plik bazy jest w `data/resume_agent.db`
 
 Zasady pracy:
 - nie zmieniaj plikow w `app/models` bez wyraznej potrzeby
 - nie zmieniaj nazw istniejacych endpointow bez wyraznej potrzeby
 - nie dodawaj nowych bibliotek bez uzasadnienia
-- logike biznesowa umieszczaj w `app/services`
-- routery maja byc cienkie, bez logiki biznesowej
+- logike biznesowa trzymaj w backendzie, glownie w `app/services`
+- routery backendowe maja pozostac cienkie
+- frontend ma byc cienka warstwa UI nad istniejacym API
 - rob male zmiany, bez duzego refaktoru
-- nie dodawaj Dockera, frontendu, Postgresa ani n8n w biezacych zadaniach
+- nie dodawaj Dockera, Postgresa ani n8n w biezacych zadaniach
 - nie buduj multi-agent systemu
 - jesli cos zmieniasz, pokaz ktore pliki zostaly zmienione
-- po zmianach uruchom minimalny test importow albo endpointu
+- po zmianach uruchom minimalny test backendu albo endpointu i smoke test frontendu
 
 Aktualny stan backendu:
 - istnieje `POST /profile/validate`
@@ -42,6 +44,16 @@ Aktualne endpointy persystencji:
 - `POST /match/save`
 - `GET /match`
 - `GET /match/{match_result_id}`
+
+Aktualny stan frontendu:
+- frontend MVP jest w `frontend/`
+- korzysta z React + Vite
+- ma jeden ekran roboczy bez routingu
+- korzysta z:
+  - `GET /health`
+  - `POST /job/parse-url`
+  - `POST /job/save`
+- frontend nie zawiera logiki biznesowej parsera ani matchingu
 
 Zasady persystencji:
 - dane domenowe sa trzymane jako JSON serializowany do tekstu
