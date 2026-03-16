@@ -1,9 +1,13 @@
+"""Service layer for storing and loading domain models from SQLite JSON payloads."""
+
 from __future__ import annotations
 
 import json
 from typing import Any
 
 from app.db.repositories import (
+    delete_candidate_profile_record,
+    delete_job_posting_record,
     get_candidate_profile_record,
     get_job_posting_record,
     get_match_result_record,
@@ -20,6 +24,7 @@ from app.models.match import MatchResult
 
 
 def save_candidate_profile(profile: CandidateProfile) -> dict[str, Any]:
+    """Persist a candidate profile and return stored metadata with the payload."""
     record = save_candidate_profile_record(
         full_name=profile.personal_info.full_name,
         email=profile.personal_info.email,
@@ -35,6 +40,7 @@ def save_candidate_profile(profile: CandidateProfile) -> dict[str, Any]:
 
 
 def get_candidate_profile(profile_id: int) -> dict[str, Any] | None:
+    """Load a stored candidate profile by database ID."""
     record = get_candidate_profile_record(profile_id)
     if record is None:
         return None
@@ -48,6 +54,7 @@ def get_candidate_profile(profile_id: int) -> dict[str, Any] | None:
 
 
 def list_candidate_profiles(limit: int = 50) -> list[dict[str, Any]]:
+    """List stored candidate profiles without loading full payload JSON."""
     records = list_candidate_profile_records(limit=limit)
     return [
         {
@@ -60,7 +67,20 @@ def list_candidate_profiles(limit: int = 50) -> list[dict[str, Any]]:
     ]
 
 
+def delete_candidate_profile(profile_id: int) -> bool:
+    """Delete a stored candidate profile by database ID.
+
+    Args:
+        profile_id: Database identifier of the stored candidate profile.
+
+    Returns:
+        True when the record existed and was deleted, otherwise False.
+    """
+    return delete_candidate_profile_record(profile_id)
+
+
 def save_job_posting(job_posting: JobPosting, *, source_url: str | None = None) -> dict[str, Any]:
+    """Persist a parsed job posting together with lightweight listing metadata."""
     record = save_job_posting_record(
         source=job_posting.source,
         source_url=source_url,
@@ -82,6 +102,7 @@ def save_job_posting(job_posting: JobPosting, *, source_url: str | None = None) 
 
 
 def get_job_posting(job_posting_id: int) -> dict[str, Any] | None:
+    """Load a stored job posting by database ID."""
     record = get_job_posting_record(job_posting_id)
     if record is None:
         return None
@@ -98,6 +119,7 @@ def get_job_posting(job_posting_id: int) -> dict[str, Any] | None:
 
 
 def list_job_postings(limit: int = 50) -> list[dict[str, Any]]:
+    """List stored job postings without hydrating full JobPosting payloads."""
     records = list_job_posting_records(limit=limit)
     return [
         {
@@ -113,12 +135,25 @@ def list_job_postings(limit: int = 50) -> list[dict[str, Any]]:
     ]
 
 
+def delete_job_posting(job_posting_id: int) -> bool:
+    """Delete a stored job posting by database ID.
+
+    Args:
+        job_posting_id: Database identifier of the stored job posting.
+
+    Returns:
+        True when the record existed and was deleted, otherwise False.
+    """
+    return delete_job_posting_record(job_posting_id)
+
+
 def save_match_result(
     match_result: MatchResult,
     *,
     candidate_profile_id: int | None = None,
     job_posting_id: int | None = None,
 ) -> dict[str, Any]:
+    """Persist a MatchResult and optional links to stored profile and job records."""
     record = save_match_result_record(
         candidate_profile_id=candidate_profile_id,
         job_posting_id=job_posting_id,
@@ -140,6 +175,7 @@ def save_match_result(
 
 
 def get_match_result(match_result_id: int) -> dict[str, Any] | None:
+    """Load a stored match result by database ID."""
     record = get_match_result_record(match_result_id)
     if record is None:
         return None
@@ -156,6 +192,7 @@ def get_match_result(match_result_id: int) -> dict[str, Any] | None:
 
 
 def list_match_results(limit: int = 50) -> list[dict[str, Any]]:
+    """List stored match results without loading the nested MatchResult payload."""
     records = list_match_result_records(limit=limit)
     return [
         {
@@ -172,8 +209,10 @@ def list_match_results(limit: int = 50) -> list[dict[str, Any]]:
 
 
 def _serialize_model(model: Any) -> str:
+    """Serialize a Pydantic model to JSON text for SQLite storage."""
     return json.dumps(model.model_dump(mode="json"), ensure_ascii=False)
 
 
 def _deserialize_model(payload_json: str, model_type: type[Any]) -> Any:
+    """Deserialize stored JSON text back into the requested Pydantic model."""
     return model_type.model_validate(json.loads(payload_json))

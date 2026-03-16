@@ -1,3 +1,5 @@
+"""Match analysis and match result persistence endpoints."""
+
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -12,12 +14,14 @@ router = APIRouter(prefix="/match", tags=["match"])
 
 
 class SaveMatchResultRequest(BaseModel):
+    """Request payload for saving a MatchResult with optional record links."""
     match_result: MatchResult
     candidate_profile_id: int | None = Field(default=None)
     job_posting_id: int | None = Field(default=None)
 
 
 class StoredMatchResultResponse(BaseModel):
+    """Response payload returned for a stored match result."""
     id: int
     saved_at: datetime
     candidate_profile_id: int | None = None
@@ -29,6 +33,7 @@ class StoredMatchResultResponse(BaseModel):
 
 
 class MatchResultListItem(BaseModel):
+    """Compact match result item used in list responses."""
     id: int
     saved_at: datetime
     candidate_profile_id: int | None = None
@@ -40,11 +45,13 @@ class MatchResultListItem(BaseModel):
 
 @router.post("/analyze", response_model=MatchResult)
 def analyze_match(payload: MatchAnalysisRequest) -> MatchResult:
+    """Analyze fit between candidate profile and job posting."""
     return analyze_match_basic(payload)
 
 
 @router.post("/save", response_model=StoredMatchResultResponse)
 def save_match(payload: SaveMatchResultRequest) -> StoredMatchResultResponse:
+    """Persist a MatchResult and return stored metadata."""
     stored_match = save_match_result(
         payload.match_result,
         candidate_profile_id=payload.candidate_profile_id,
@@ -55,11 +62,13 @@ def save_match(payload: SaveMatchResultRequest) -> StoredMatchResultResponse:
 
 @router.get("", response_model=list[MatchResultListItem])
 def list_matches(limit: int = Query(default=50, ge=1, le=100)) -> list[MatchResultListItem]:
+    """List stored match results ordered from newest to oldest."""
     return [MatchResultListItem.model_validate(item) for item in list_match_results(limit=limit)]
 
 
 @router.get("/{match_result_id}", response_model=StoredMatchResultResponse)
 def get_match(match_result_id: int) -> StoredMatchResultResponse:
+    """Load a stored match result by ID."""
     stored_match = get_match_result(match_result_id)
     if stored_match is None:
         raise HTTPException(status_code=404, detail="Match result not found")

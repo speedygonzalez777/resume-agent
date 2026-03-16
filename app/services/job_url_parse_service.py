@@ -1,3 +1,5 @@
+"""Orchestrate the URL-first flow from fetch to validated JobPosting."""
+
 from __future__ import annotations
 
 from app.models.job import JobPosting
@@ -7,6 +9,14 @@ from app.services.openai_job_parser_service import parse_job_posting_with_openai
 
 
 def parse_job_posting_from_url(url: str) -> JobPosting:
+    """Fetch, parse and validate a job posting from a public URL.
+
+    Args:
+        url: Public URL pointing to a single job posting.
+
+    Returns:
+        Normalized and validated JobPosting parsed from the fetched page.
+    """
     fetched_page = fetch_job_page(url)
     parsed_job_posting = parse_job_posting_with_openai(fetched_page)
 
@@ -29,6 +39,7 @@ def parse_job_posting_from_url(url: str) -> JobPosting:
 
 
 def _validate_parsed_job_posting(job_posting: JobPosting) -> None:
+    """Reject parsed results that miss critical JobPosting fields."""
     missing_elements: list[str] = []
 
     if not job_posting.title:
@@ -46,10 +57,12 @@ def _validate_parsed_job_posting(job_posting: JobPosting) -> None:
 
 
 def _normalize_str(value: str) -> str:
+    """Collapse whitespace and trim a required string field."""
     return " ".join(value.split()).strip()
 
 
 def _normalize_optional_str(value: str | None) -> str | None:
+    """Normalize an optional string field and preserve None when empty."""
     if value is None:
         return None
 

@@ -42,6 +42,26 @@ def test_profile_persistence_endpoints(client: TestClient) -> None:
     assert get_response.status_code == 200
     assert get_response.json()["payload"] == normalized_payload
 
+    list_response = client.get("/profile")
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1
+    assert list_response.json()[0]["id"] == profile_id
+
+    delete_response = client.delete(f"/profile/{profile_id}")
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {
+        "id": profile_id,
+        "deleted": True,
+        "message": "Candidate profile deleted",
+    }
+
+    list_after_delete_response = client.get("/profile")
+    assert list_after_delete_response.status_code == 200
+    assert list_after_delete_response.json() == []
+
+    get_after_delete_response = client.get(f"/profile/{profile_id}")
+    assert get_after_delete_response.status_code == 404
+
 
 def test_job_persistence_endpoints(client: TestClient) -> None:
     payload = _load_json("job_posting_test.json")
@@ -69,6 +89,33 @@ def test_job_persistence_endpoints(client: TestClient) -> None:
     get_response = client.get(f"/job/{job_id}")
     assert get_response.status_code == 200
     assert get_response.json()["payload"] == payload
+
+    delete_response = client.delete(f"/job/{job_id}")
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {
+        "id": job_id,
+        "deleted": True,
+        "message": "Job posting deleted",
+    }
+
+    list_after_delete_response = client.get("/job")
+    assert list_after_delete_response.status_code == 200
+    assert list_after_delete_response.json() == []
+
+    get_after_delete_response = client.get(f"/job/{job_id}")
+    assert get_after_delete_response.status_code == 404
+
+
+def test_delete_missing_job_posting_returns_404(client: TestClient) -> None:
+    response = client.delete("/job/9999")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Job posting not found"
+
+
+def test_delete_missing_candidate_profile_returns_404(client: TestClient) -> None:
+    response = client.delete("/profile/9999")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Candidate profile not found"
 
 
 def test_match_result_persistence_endpoints(client: TestClient) -> None:

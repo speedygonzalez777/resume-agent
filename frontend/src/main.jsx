@@ -1,3 +1,7 @@
+/**
+ * Frontend entrypoint that mounts the React app into the Vite root node.
+ */
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 
@@ -9,3 +13,4 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>,
 );
+

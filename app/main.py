@@ -1,3 +1,5 @@
+"""FastAPI application entrypoint for the local Resume Tailoring Agent backend."""
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes_job import router as job_router
 from app.api.routes_match import router as match_router
 from app.api.routes_profile import router as profile_router
-from app.db import init_db
+from app.db import init_db, reset_database_state
 
 _ALLOWED_FRONTEND_ORIGINS = [
     "http://localhost:5173",
@@ -18,7 +20,10 @@ _ALLOWED_FRONTEND_ORIGINS = [
 async def lifespan(_: FastAPI):
     """Initialize application resources on startup and release them on shutdown."""
     init_db()
-    yield
+    try:
+        yield
+    finally:
+        reset_database_state()
 
 
 app = FastAPI(

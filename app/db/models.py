@@ -1,3 +1,5 @@
+"""Minimal SQLAlchemy table models used for local JSON-based persistence."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -9,6 +11,7 @@ from app.db.database import Base
 
 
 class CandidateProfileRecord(Base):
+    """Stored candidate profile metadata plus serialized JSON payload."""
     __tablename__ = "candidate_profiles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -23,6 +26,7 @@ class CandidateProfileRecord(Base):
 
 
 class JobPostingRecord(Base):
+    """Stored job posting metadata plus serialized JSON payload."""
     __tablename__ = "job_postings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -40,6 +44,7 @@ class JobPostingRecord(Base):
 
 
 class MatchResultRecord(Base):
+    """Stored match result metadata plus serialized JSON payload."""
     __tablename__ = "match_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

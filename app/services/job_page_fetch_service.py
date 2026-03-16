@@ -1,3 +1,5 @@
+"""Fetch and assess job posting pages before they are sent to the AI parser."""
+
 from __future__ import annotations
 
 import os
@@ -62,6 +64,7 @@ _SPA_SHELL_MARKERS = (
 
 @dataclass(slots=True)
 class FetchedJobPage:
+    """Fetched page content passed to the downstream AI parsing step."""
     requested_url: str
     final_url: str
     source_hint: str
@@ -71,6 +74,7 @@ class FetchedJobPage:
     raw_html: str
 
     def build_ai_input(self) -> str:
+        """Build the text payload sent to the OpenAI job parser."""
         extracted_lines_preview = "\n".join(f"- {line}" for line in self.extracted_lines[:_MAX_SECTION_LINES])
         return (
             f"Requested URL: {self.requested_url}\n"
@@ -84,6 +88,7 @@ class FetchedJobPage:
 
 @dataclass(slots=True)
 class _FetchAttempt:
+    """Internal representation of a single fetch attempt and its diagnostics."""
     requested_url: str
     final_url: str | None
     raw_html: str
@@ -98,6 +103,7 @@ class _FetchAttempt:
 
 
 class _VisibleTextHTMLParser(HTMLParser):
+    """Extract visible text blocks from HTML while skipping obvious noise tags."""
     _BLOCK_TAGS = {
         "article",
         "aside",
@@ -136,9 +142,11 @@ class _VisibleTextHTMLParser(HTMLParser):
 
     @property
     def lines(self) -> list[str]:
+        """Return the normalized visible text lines collected during parsing."""
         return self._lines
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Track block and skipped tags while walking the HTML tree."""
         tag = tag.lower()
         if tag in self._SKIP_TAGS:
             self._skip_tag_stack.append(tag)
@@ -150,6 +158,7 @@ class _VisibleTextHTMLParser(HTMLParser):
         self._tag_stack.append(tag)
 
     def handle_endtag(self, tag: str) -> None:
+        """Flush buffered text when finishing visible block elements."""
         tag = tag.lower()
         if self._skip_tag_stack:
             if tag == self._skip_tag_stack[-1]:
@@ -166,6 +175,7 @@ class _VisibleTextHTMLParser(HTMLParser):
         self._pop_tag(tag)
 
     def handle_data(self, data: str) -> None:
+        """Collect non-empty visible text tokens from the HTML stream."""
         if self._skip_tag_stack:
             return
         cleaned = " ".join(data.split())
@@ -173,25 +183,30 @@ class _VisibleTextHTMLParser(HTMLParser):
             self._current_tokens.append(cleaned)
 
     def close(self) -> None:
+        """Flush the last buffered text fragment before finishing parsing."""
         self._flush_current_tokens()
         super().close()
 
     def _consume_current_tokens(self) -> str:
+        """Join the currently buffered tokens into a single text fragment."""
         text = " ".join(self._current_tokens).strip()
         self._current_tokens = []
         return text
 
     def _flush_current_tokens(self) -> None:
+        """Store the current text fragment as a visible output line when non-empty."""
         text = self._consume_current_tokens()
         if text:
             self._lines.append(text)
 
     def _pop_tag(self, tag: str) -> None:
+        """Remove the current tag from the parser stack when it matches the top."""
         if self._tag_stack and self._tag_stack[-1] == tag:
             self._tag_stack.pop()
 
 
 def derive_source_from_url(url: str) -> str:
+    """Infer a short source hint from the job posting URL hostname."""
     hostname = _hostname_from_url(url)
     if hostname.startswith("www."):
         hostname = hostname[4:]
@@ -207,6 +222,14 @@ def derive_source_from_url(url: str) -> str:
 
 
 def fetch_job_page(url: str) -> FetchedJobPage:
+    """Fetch a job posting page and raise truthful errors when content is unusable.
+
+    Args:
+        url: Public URL of a single job posting page.
+
+    Returns:
+        FetchedJobPage ready for downstream AI parsing.
+    """
     load_dotenv()
 
     standard_attempt = _fetch_with_standard_http(url)
@@ -224,6 +247,7 @@ def fetch_job_page(url: str) -> FetchedJobPage:
 
 
 def _fetch_with_standard_http(url: str) -> _FetchAttempt:
+    """Run the primary HTTP fetch attempt with browser-like headers."""
     try:
         with httpx.Client(
             follow_redirects=True,
@@ -260,6 +284,7 @@ def _fetch_with_standard_http(url: str) -> _FetchAttempt:
 
 
 def _fetch_with_browser_fallback(url: str) -> _FetchAttempt:
+    """Run the optional browser-based fallback when HTTP fetch is unusable."""
     try:
         browser_page = fetch_page_with_browser(url)
     except BrowserPageFetchError as exc:
@@ -288,6 +313,7 @@ def _assess_attempt(
     http_status: int | None,
     fetch_method: str,
 ) -> _FetchAttempt:
+    """Classify a fetch attempt as usable, failed or too poor for parsing."""
     page_title, extracted_lines, cleaned_text = _extract_page_content(raw_html)
     blocked_by_target_site, fetch_failure_reason = _detect_fetch_failure(
         http_status=http_status,
@@ -342,6 +368,7 @@ def _assess_attempt(
 
 
 def _extract_page_content(raw_html: str) -> tuple[str, list[str], str]:
+    """Extract the page title and visible text lines from raw HTML."""
     parser = _VisibleTextHTMLParser()
     parser.feed(raw_html)
     parser.close()
@@ -356,6 +383,7 @@ def _detect_fetch_failure(
     page_title: str,
     cleaned_text: str,
 ) -> tuple[bool, str | None]:
+    """Detect blocked responses and hard fetch failures before content analysis."""
     if http_status in _BLOCKED_STATUS_CODES:
         return True, f"http_status_{http_status}"
     if http_status is not None and http_status >= 400:
@@ -368,6 +396,7 @@ def _detect_fetch_failure(
 
 
 def _detect_poor_content_reason(raw_html: str, extracted_lines: list[str], cleaned_text: str) -> str | None:
+    """Detect pages that were fetched but still do not contain usable job content."""
     is_too_short = len(extracted_lines) < _MIN_CONTENT_LINES or len(cleaned_text) < _MIN_CONTENT_CHARS
     if is_too_short:
         scan_blob = "\n".join((cleaned_text[:2000], raw_html[:4000])).lower()
@@ -381,6 +410,7 @@ def _detect_poor_content_reason(raw_html: str, extracted_lines: list[str], clean
 
 
 def _normalize_lines(lines: Iterable[str]) -> list[str]:
+    """Deduplicate and clean extracted text lines before scoring page quality."""
     normalized_lines: list[str] = []
     seen_lines: set[str] = set()
     for line in lines:
@@ -396,6 +426,7 @@ def _normalize_lines(lines: Iterable[str]) -> list[str]:
 
 
 def _to_fetched_job_page(attempt: _FetchAttempt) -> FetchedJobPage:
+    """Convert a successful internal fetch attempt into the public fetch result."""
     final_url = attempt.final_url or attempt.requested_url
     return FetchedJobPage(
         requested_url=attempt.requested_url,
@@ -416,6 +447,7 @@ def _failed_attempt(
     fetch_method: str,
     reason: str,
 ) -> _FetchAttempt:
+    """Build a failed fetch attempt object with consistent diagnostics."""
     return _FetchAttempt(
         requested_url=url,
         final_url=final_url,
@@ -432,6 +464,7 @@ def _failed_attempt(
 
 
 def _should_try_browser_fallback(url: str, attempt: _FetchAttempt) -> bool:
+    """Decide whether the optional browser fallback should run for this attempt."""
     if attempt.error_code is None or not _read_bool_env(_BROWSER_FALLBACK_ENABLED_ENV):
         return False
 
@@ -448,6 +481,7 @@ def _raise_attempt_error(
     standard_attempt: _FetchAttempt,
     browser_attempt: _FetchAttempt | None,
 ) -> None:
+    """Raise the final fetch error with combined diagnostics from all attempts."""
     final_attempt = browser_attempt or standard_attempt
     details = {
         "url": requested_url,
@@ -476,6 +510,7 @@ def _raise_attempt_error(
 
 
 def _combine_reason(standard_attempt: _FetchAttempt, browser_attempt: _FetchAttempt | None) -> str:
+    """Merge standard and browser fetch failure reasons into one short string."""
     if browser_attempt is None:
         return standard_attempt.reason
     return (
@@ -485,15 +520,18 @@ def _combine_reason(standard_attempt: _FetchAttempt, browser_attempt: _FetchAtte
 
 
 def _hostname_from_url(url: str) -> str:
+    """Return the normalized hostname extracted from a URL."""
     return (urlparse(url).hostname or "").lower()
 
 
 def _read_bool_env(env_name: str) -> bool:
+    """Interpret a boolean-like env var using common truthy string values."""
     raw_value = os.getenv(env_name, "").strip().lower()
     return raw_value in {"1", "true", "yes", "on"}
 
 
 def _read_csv_env(env_name: str) -> set[str]:
+    """Read a comma-separated env var into a normalized hostname set."""
     raw_value = os.getenv(env_name, "")
     return {
         chunk.strip().lower().removeprefix("www.")

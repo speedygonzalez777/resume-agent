@@ -1,3 +1,5 @@
+"""Small repository helpers for CRUD-like access to SQLite persistence tables."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -9,6 +11,7 @@ from app.db.models import CandidateProfileRecord, JobPostingRecord, MatchResultR
 
 
 def save_candidate_profile_record(*, full_name: str, email: str, payload_json: str) -> dict[str, Any]:
+    """Insert a candidate profile row and return its stored representation."""
     with session_scope() as session:
         record = CandidateProfileRecord(
             full_name=full_name,
@@ -21,6 +24,7 @@ def save_candidate_profile_record(*, full_name: str, email: str, payload_json: s
 
 
 def get_candidate_profile_record(profile_id: int) -> dict[str, Any] | None:
+    """Load a single stored candidate profile row by ID."""
     with session_scope() as session:
         record = session.get(CandidateProfileRecord, profile_id)
         if record is None:
@@ -29,10 +33,30 @@ def get_candidate_profile_record(profile_id: int) -> dict[str, Any] | None:
 
 
 def list_candidate_profile_records(limit: int = 50) -> list[dict[str, Any]]:
+    """List candidate profile rows ordered from newest to oldest."""
     with session_scope() as session:
         statement = select(CandidateProfileRecord).order_by(desc(CandidateProfileRecord.id)).limit(limit)
         records = session.execute(statement).scalars().all()
         return [_candidate_profile_record_to_dict(record, include_payload=False) for record in records]
+
+
+def delete_candidate_profile_record(profile_id: int) -> bool:
+    """Delete one stored candidate profile row by ID.
+
+    Args:
+        profile_id: Database identifier of the stored candidate profile.
+
+    Returns:
+        True when the row existed and was deleted, otherwise False.
+    """
+    with session_scope() as session:
+        record = session.get(CandidateProfileRecord, profile_id)
+        if record is None:
+            return False
+
+        session.delete(record)
+        session.flush()
+        return True
 
 
 def save_job_posting_record(
@@ -44,6 +68,7 @@ def save_job_posting_record(
     location: str,
     payload_json: str,
 ) -> dict[str, Any]:
+    """Insert a job posting row and return its stored representation."""
     with session_scope() as session:
         record = JobPostingRecord(
             source=source,
@@ -59,6 +84,7 @@ def save_job_posting_record(
 
 
 def get_job_posting_record(job_posting_id: int) -> dict[str, Any] | None:
+    """Load a single stored job posting row by ID."""
     with session_scope() as session:
         record = session.get(JobPostingRecord, job_posting_id)
         if record is None:
@@ -67,10 +93,30 @@ def get_job_posting_record(job_posting_id: int) -> dict[str, Any] | None:
 
 
 def list_job_posting_records(limit: int = 50) -> list[dict[str, Any]]:
+    """List job posting rows ordered from newest to oldest."""
     with session_scope() as session:
         statement = select(JobPostingRecord).order_by(desc(JobPostingRecord.id)).limit(limit)
         records = session.execute(statement).scalars().all()
         return [_job_posting_record_to_dict(record, include_payload=False) for record in records]
+
+
+def delete_job_posting_record(job_posting_id: int) -> bool:
+    """Delete one stored job posting row by ID.
+
+    Args:
+        job_posting_id: Database identifier of the stored job posting.
+
+    Returns:
+        True when the row existed and was deleted, otherwise False.
+    """
+    with session_scope() as session:
+        record = session.get(JobPostingRecord, job_posting_id)
+        if record is None:
+            return False
+
+        session.delete(record)
+        session.flush()
+        return True
 
 
 def save_match_result_record(
@@ -82,6 +128,7 @@ def save_match_result_record(
     recommendation: str,
     payload_json: str,
 ) -> dict[str, Any]:
+    """Insert a match result row and return its stored representation."""
     with session_scope() as session:
         record = MatchResultRecord(
             candidate_profile_id=candidate_profile_id,
@@ -97,6 +144,7 @@ def save_match_result_record(
 
 
 def get_match_result_record(match_result_id: int) -> dict[str, Any] | None:
+    """Load a single stored match result row by ID."""
     with session_scope() as session:
         record = session.get(MatchResultRecord, match_result_id)
         if record is None:
@@ -105,6 +153,7 @@ def get_match_result_record(match_result_id: int) -> dict[str, Any] | None:
 
 
 def list_match_result_records(limit: int = 50) -> list[dict[str, Any]]:
+    """List match result rows ordered from newest to oldest."""
     with session_scope() as session:
         statement = select(MatchResultRecord).order_by(desc(MatchResultRecord.id)).limit(limit)
         records = session.execute(statement).scalars().all()
@@ -116,6 +165,7 @@ def _candidate_profile_record_to_dict(
     *,
     include_payload: bool,
 ) -> dict[str, Any]:
+    """Convert a candidate profile ORM row into the repository return shape."""
     payload: dict[str, Any] = {
         "id": record.id,
         "saved_at": record.saved_at,
@@ -132,6 +182,7 @@ def _job_posting_record_to_dict(
     *,
     include_payload: bool,
 ) -> dict[str, Any]:
+    """Convert a job posting ORM row into the repository return shape."""
     payload: dict[str, Any] = {
         "id": record.id,
         "saved_at": record.saved_at,
@@ -151,6 +202,7 @@ def _match_result_record_to_dict(
     *,
     include_payload: bool,
 ) -> dict[str, Any]:
+    """Convert a match result ORM row into the repository return shape."""
     payload: dict[str, Any] = {
         "id": record.id,
         "saved_at": record.saved_at,

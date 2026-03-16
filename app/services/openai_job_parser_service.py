@@ -1,3 +1,5 @@
+"""OpenAI-backed parser that turns fetched page content into a JobPosting."""
+
 from __future__ import annotations
 
 import os
@@ -21,6 +23,14 @@ _SAMPLING_CAPABLE_MODEL_PREFIXES = (
 
 
 def parse_job_posting_with_openai(fetched_page: FetchedJobPage) -> JobPosting:
+    """Parse a fetched job page into a structured JobPosting via Responses API.
+
+    Args:
+        fetched_page: Page content already fetched and cleaned by the backend.
+
+    Returns:
+        Structured JobPosting parsed from the fetched page content.
+    """
     load_dotenv()
 
     api_key = os.getenv("OPENAI_API_KEY")
@@ -62,6 +72,7 @@ def _build_responses_parse_kwargs(
     fetched_page: FetchedJobPage,
     model_name: str,
 ) -> dict[str, Any]:
+    """Build the request payload for OpenAI structured parsing."""
     request_kwargs: dict[str, Any] = {
         "model": model_name,
         "instructions": JOB_POSTING_PARSE_INSTRUCTIONS,
@@ -73,6 +84,7 @@ def _build_responses_parse_kwargs(
 
 
 def _build_optional_parse_kwargs(model_name: str) -> dict[str, Any]:
+    """Add optional sampling parameters only for models that support them."""
     optional_kwargs: dict[str, Any] = {}
 
     if _model_supports_sampling_params(model_name):
@@ -96,6 +108,7 @@ def _build_optional_parse_kwargs(model_name: str) -> dict[str, Any]:
 
 
 def _model_supports_sampling_params(model_name: str) -> bool:
+    """Return whether a model family supports explicit sampling parameters."""
     normalized_model_name = model_name.strip().lower()
     return normalized_model_name.startswith(_SAMPLING_CAPABLE_MODEL_PREFIXES)
 
@@ -106,6 +119,7 @@ def _read_optional_float_env(
     min_value: float,
     max_value: float,
 ) -> float | None:
+    """Read an optional float env var and validate its allowed range."""
     raw_value = os.getenv(env_name)
     if raw_value is None or raw_value.strip() == "":
         return None

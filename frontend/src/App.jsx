@@ -1,139 +1,65 @@
-import { useEffect, useState } from "react";
-
-import { checkBackendHealth, parseJobPosting, saveJobPosting } from "./api";
-
-/**
- * Convert an unknown error into a short user-facing message.
- *
- * @param {unknown} error Error-like value thrown by fetch helpers.
- * @returns {string} Readable message safe to show in the UI.
+﻿/**
+ * Top-level tab shell for the local Resume Tailoring Agent frontend.
  */
-function getErrorMessage(error) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  return "Wystapil nieoczekiwany blad.";
-}
+
+import { useState } from "react";
+
+import CandidateProfileTab from "./CandidateProfileTab";
+import JobOffersTab from "./JobOffersTab";
+import MatchingTab from "./MatchingTab";
+
+const TAB_DEFINITIONS = [
+  { id: "jobs", label: "Oferty pracy" },
+  { id: "profile", label: "Profil kandydata" },
+  { id: "matching", label: "Matching" },
+];
 
 /**
- * Render the single-screen frontend MVP for parsing and saving job postings.
+ * Render the shared shell with lightweight frontend tabs.
  *
  * @returns {JSX.Element} Root application view.
  */
 export default function App() {
-  const [backendStatus, setBackendStatus] = useState("Sprawdzanie...");
-  const [jobUrl, setJobUrl] = useState("");
-  const [parsedJobPosting, setParsedJobPosting] = useState(null);
-  const [parseLoading, setParseLoading] = useState(false);
-  const [saveLoading, setSaveLoading] = useState(false);
-  const [message, setMessage] = useState(null);
-
-  useEffect(() => {
-    /**
-     * Load backend health once on initial render.
-     *
-     * @returns {Promise<void>} Promise resolved after the health status is updated.
-     */
-    async function loadHealth() {
-      try {
-        const payload = await checkBackendHealth();
-        setBackendStatus(payload.status === "ok" ? "Backend dziala" : "Backend odpowiada nieoczekiwanie");
-      } catch (error) {
-        setBackendStatus(`Blad polaczenia: ${getErrorMessage(error)}`);
-      }
-    }
-
-    loadHealth();
-  }, []);
-
-  /**
-   * Parse a job posting URL through the backend and show the returned JobPosting.
-   *
-   * @returns {Promise<void>} Promise resolved after parse state is updated.
-   */
-  async function handleParseClick() {
-    setParseLoading(true);
-    setMessage(null);
-    setParsedJobPosting(null);
-
-    try {
-      const payload = await parseJobPosting(jobUrl.trim());
-      setParsedJobPosting(payload);
-      setMessage({ type: "success", text: "Oferta zostala sparsowana." });
-    } catch (error) {
-      setMessage({ type: "error", text: getErrorMessage(error) });
-    } finally {
-      setParseLoading(false);
-    }
-  }
-
-  /**
-   * Save the currently parsed JobPosting using the existing backend persistence endpoint.
-   *
-   * @returns {Promise<void>} Promise resolved after save state is updated.
-   */
-  async function handleSaveClick() {
-    if (!parsedJobPosting) {
-      return;
-    }
-
-    setSaveLoading(true);
-    setMessage(null);
-
-    try {
-      const payload = await saveJobPosting(parsedJobPosting, jobUrl.trim());
-      setMessage({
-        type: "success",
-        text: `Oferta zostala zapisana z ID ${payload.id}.`,
-      });
-    } catch (error) {
-      setMessage({ type: "error", text: getErrorMessage(error) });
-    } finally {
-      setSaveLoading(false);
-    }
-  }
+  const [activeTab, setActiveTab] = useState("jobs");
 
   return (
     <main className="app-shell">
       <section className="panel">
-        <h1>Resume Tailoring Agent</h1>
-        <p className="subtitle">Minimalny frontend MVP dla parsowania ofert pracy i zapisu do SQLite.</p>
+        <header className="app-header">
+          <div>
+            <h1>Resume Tailoring Agent</h1>
+            <p className="subtitle">
+              Lokalne narzedzie do pracy z ofertami pracy, profilami kandydatow i ocena dopasowania.
+            </p>
+          </div>
+        </header>
 
-        <div className="status-row">
-          <span className="label">Health check:</span>
-          <span>{backendStatus}</span>
-        </div>
+        <nav className="tab-nav" aria-label="Glowne zakladki aplikacji">
+          {TAB_DEFINITIONS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`tab-button${activeTab === tab.id ? " active" : ""}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
 
-        <label className="field">
-          <span>URL oferty pracy</span>
-          <input
-            type="url"
-            placeholder="https://www.pracuj.pl/praca/..."
-            value={jobUrl}
-            onChange={(event) => setJobUrl(event.target.value)}
-          />
-        </label>
+        <section className="tab-panel" hidden={activeTab !== "jobs"}>
+          <JobOffersTab />
+        </section>
 
-        <div className="actions">
-          <button type="button" onClick={handleParseClick} disabled={parseLoading || saveLoading || !jobUrl.trim()}>
-            {parseLoading ? "Parsowanie..." : "Parsuj oferte"}
-          </button>
-          <button type="button" onClick={handleSaveClick} disabled={saveLoading || !parsedJobPosting}>
-            {saveLoading ? "Zapisywanie..." : "Zapisz oferte"}
-          </button>
-        </div>
+        <section className="tab-panel" hidden={activeTab !== "profile"}>
+          <CandidateProfileTab />
+        </section>
 
-        {message ? <div className={`message ${message.type}`}>{message.text}</div> : null}
-
-        <section className="result-panel">
-          <h2>JobPosting</h2>
-          {parsedJobPosting ? (
-            <pre>{JSON.stringify(parsedJobPosting, null, 2)}</pre>
-          ) : (
-            <p className="placeholder">Po sparsowaniu tutaj pojawi sie odpowiedz backendu.</p>
-          )}
+        <section className="tab-panel" hidden={activeTab !== "matching"}>
+          <MatchingTab />
         </section>
       </section>
     </main>
   );
 }
+

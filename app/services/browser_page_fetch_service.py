@@ -1,3 +1,5 @@
+"""Optional Playwright fallback for pages that standard HTTP fetch cannot read well."""
+
 from __future__ import annotations
 
 import os
@@ -17,17 +19,27 @@ _WAIT_AFTER_LOAD_ENV = "JOB_URL_BROWSER_FALLBACK_WAIT_MS"
 
 
 class BrowserPageFetchError(Exception):
+    """Raised when the browser-based fallback cannot fetch a page."""
     pass
 
 
 @dataclass(slots=True)
 class BrowserFetchedPage:
+    """Browser-fetched HTML payload returned by the fallback fetcher."""
     requested_url: str
     final_url: str
     raw_html: str
 
 
 def fetch_page_with_browser(url: str) -> BrowserFetchedPage:
+    """Fetch a page with Playwright and return rendered HTML.
+
+    Args:
+        url: Public page URL to open in the browser fallback.
+
+    Returns:
+        BrowserFetchedPage with the final URL and rendered HTML.
+    """
     load_dotenv()
 
     try:
@@ -73,6 +85,7 @@ def fetch_page_with_browser(url: str) -> BrowserFetchedPage:
 
 
 def _read_float_env(env_name: str, *, default: float) -> float:
+    """Read a float env var and fall back to the provided default on errors."""
     raw_value = os.getenv(env_name)
     if raw_value is None:
         return default
@@ -84,6 +97,7 @@ def _read_float_env(env_name: str, *, default: float) -> float:
 
 
 def _read_int_env(env_name: str, *, default: int) -> int:
+    """Read an integer env var and fall back to the provided default on errors."""
     raw_value = os.getenv(env_name)
     if raw_value is None:
         return default
