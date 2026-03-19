@@ -1,4 +1,6 @@
-# Backend Python dependencies for the FastAPI API.
+﻿# Backend Python dependencies for the FastAPI API.
+# CV draft generation in stage 1 did not require any new backend packages.
+# Existing DOCX-related packages stay because later export stages are still planned.
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.1
@@ -41,3 +43,5 @@ typing_extensions==4.15.0
 uvicorn==0.41.0
 watchfiles==1.1.1
 websockets==16.0
+
+

@@ -7,11 +7,13 @@ import { useState } from "react";
 import CandidateProfileTab from "./CandidateProfileTab";
 import JobOffersTab from "./JobOffersTab";
 import MatchingTab from "./MatchingTab";
+import ResumeTab from "./ResumeTab";
 
 const TAB_DEFINITIONS = [
   { id: "jobs", label: "Oferty pracy" },
   { id: "profile", label: "Profil kandydata" },
   { id: "matching", label: "Matching" },
+  { id: "resume", label: "CV i list motywacyjny" },
 ];
 
 /**
@@ -58,8 +60,11 @@ export default function App() {
         <section className="tab-panel" hidden={activeTab !== "matching"}>
           <MatchingTab />
         </section>
+
+        <section className="tab-panel" hidden={activeTab !== "resume"}>
+          <ResumeTab />
+        </section>
       </section>
     </main>
   );
 }
-

@@ -28,14 +28,17 @@ Aktualny stan backendu:
 - istnieje `POST /job/validate`
 - istnieje URL-first parser `POST /job/parse-url`
 - istnieje `POST /match/analyze`
+- istnieje stateless endpoint `POST /resume/generate`
 - matching zwraca `MatchResult` i `RequirementMatch`
 - matching liczy weighted score z wagami `importance` i mnoznikiem `requirement_type`
 - matching ma proste gating rules dla brakujacych krytycznych `must_have`
+- generator CV buduje `ResumeDraft` i `ChangeReport` z `CandidateProfile`, `JobPosting` i `MatchResult`
 - parser ofert ma HTTP-first fetch i lokalny browser fallback
 - lokalna persystencja SQLite zapisuje:
   - `CandidateProfile`
   - `JobPosting`
   - `MatchResult`
+- etap 1 nie zapisuje jeszcze `ResumeDraft` ani historii generowan
 
 Aktualne endpointy persystencji:
 - `POST /profile/save`
@@ -58,6 +61,7 @@ Aktualny stan frontendu:
   - `Oferty pracy`
   - `Profil kandydata`
   - `Matching`
+  - `CV i list motywacyjny`
 - zakladka `Oferty pracy` obsluguje:
   - `GET /health`
   - `POST /job/parse-url`
@@ -78,11 +82,18 @@ Aktualny stan frontendu:
   - `POST /match/analyze`
   - `POST /match/save`
   - czytelny widok `MatchResult`
-- frontend nie zawiera logiki biznesowej parsera ani matchingu
+- zakladka `CV i list motywacyjny` obsluguje w etapie 1:
+  - wybor zapisanego profilu
+  - wybor zapisanej oferty
+  - uzycie zapisanego `MatchResult` albo inline `POST /match/analyze`
+  - `POST /resume/generate`
+  - czytelny podglad `ResumeDraft`
+  - czytelny `ChangeReport`
+  - prosta informacje, ze list motywacyjny bedzie dodany pozniej
+- frontend nie zawiera logiki biznesowej parsera, matchingu ani generatora CV
 
 Zasady persystencji:
 - dane domenowe sa trzymane jako JSON serializowany do tekstu
 - nie przebudowujemy teraz backendu pod pelny ORM domenowy
 - `init_db()` jest wywolywane jawnie przy starcie aplikacji
 - testy persystencji maja uzywac tymczasowej SQLite, nie realnego `data/resume_agent.db`
-

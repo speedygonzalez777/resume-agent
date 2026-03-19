@@ -973,3 +973,132 @@ pre {
     align-items: stretch;
   }
 }
+
+.document-results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.document-panel-body {
+  max-height: 760px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.resume-draft-details,
+.change-report-details {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.resume-preview-header-card {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 18px;
+}
+
+.resume-config-grid {
+  align-items: start;
+}
+
+.match-source-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.compact-metric-card {
+  padding: 12px 14px;
+}
+
+.compact-metric-value {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.resume-report-summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1200px) {
+  .resume-report-summary-grid,
+  .match-source-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1024px) {
+  .document-results-grid,
+  .resume-report-summary-grid,
+  .match-source-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .document-panel-body {
+    max-height: 620px;
+  }
+}
+
+@media (max-width: 640px) {
+  .document-panel-body {
+    max-height: 420px;
+  }
+}
+
+.resume-config-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.resume-form-grid {
+  gap: 16px;
+}
+
+.resume-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.resume-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.resume-secondary-action {
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+}
+
+.resume-primary-action {
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.16);
+}
+
+.resume-config-grid {
+  margin-top: 18px;
+  align-items: start;
+}
+
+.resume-info-note {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .resume-actions {
+    grid-template-columns: 1fr;
+  }
+}

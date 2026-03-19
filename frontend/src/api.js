@@ -192,6 +192,28 @@ export async function analyzeMatch(candidateProfile, jobPosting) {
 }
 
 /**
+ * Load the stored match-result history from the backend.
+ *
+ * @param {number} [limit=50] Maximum number of records to fetch.
+ * @returns {Promise<object[]>} Stored match-result list items.
+ */
+export async function listMatchResults(limit = 50) {
+  const response = await fetch(buildApiUrl(`/match?limit=${limit}`));
+  return /** @type {Promise<object[]>} */ (readJson(response));
+}
+
+/**
+ * Load the full stored MatchResult payload for a selected record.
+ *
+ * @param {number} matchResultId Database identifier of the stored match result.
+ * @returns {Promise<object>} Stored match-result detail response.
+ */
+export async function getMatchResultDetail(matchResultId) {
+  const response = await fetch(buildApiUrl(`/match/${matchResultId}`));
+  return /** @type {Promise<object>} */ (readJson(response));
+}
+
+/**
  * Save a MatchResult through the backend persistence endpoint.
  *
  * @param {object} matchResult MatchResult payload.
@@ -212,4 +234,27 @@ export async function saveMatchResult(matchResult, candidateProfileId, jobPostin
     }),
   });
   return /** @type {Promise<object>} */ (readJson(response));
+}
+
+/**
+ * Generate a structured ResumeDraft and ChangeReport from profile, offer and matching.
+ *
+ * @param {object} candidateProfile CandidateProfile payload.
+ * @param {object} jobPosting JobPosting payload.
+ * @param {object} matchResult MatchResult payload.
+ * @returns {Promise<{resume_draft: object, change_report: object}>} Generated draft artifacts.
+ */
+export async function generateResumeDraft(candidateProfile, jobPosting, matchResult) {
+  const response = await fetch(buildApiUrl("/resume/generate"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      candidate_profile: candidateProfile,
+      job_posting: jobPosting,
+      match_result: matchResult,
+    }),
+  });
+  return /** @type {Promise<{resume_draft: object, change_report: object}>} */ (readJson(response));
 }

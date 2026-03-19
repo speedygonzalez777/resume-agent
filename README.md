@@ -1,6 +1,14 @@
 ﻿# Resume Tailoring Agent
 
-Resume Tailoring Agent to lokalny system MVP do dopasowywania CV do ofert pracy. Backend FastAPI odpowiada za parsowanie ofert, persystencje SQLite i matching, a frontend React + Vite daje lekki interfejs do codziennej pracy na localhost.
+Resume Tailoring Agent to lokalny system MVP do analizy ofert pracy, profilow kandydatow i dopasowywania CV do konkretnej oferty. Backend FastAPI odpowiada za parsowanie ofert, matching, generowanie draftu CV i lokalna persystencje SQLite, a frontend React + Vite daje lekki interfejs do codziennej pracy na localhost.
+
+## Zasada truthful-first
+
+System dziala w trybie truthful-first:
+- nie dopisuje niepotwierdzonych doswiadczen, technologii, certyfikatow ani lat doswiadczenia,
+- brak danych nie oznacza spelnienia wymagania,
+- lepiej pominac slaby element niz sztucznie go upiekszyc,
+- kazdy draft ma byc mocny, ale nadal prawdziwy.
 
 ## Aktualny zakres MVP
 
@@ -10,12 +18,25 @@ Backend:
 - URL-first parser ofert `POST /job/parse-url`
 - lokalna persystencja SQLite dla `CandidateProfile`, `JobPosting` i `MatchResult`
 - matching keywordowy zwracajacy `MatchResult` z weighted score i prostymi gating rules
+- stateless generator CV `POST /resume/generate`, ktory zwraca `ResumeDraft` i `ChangeReport`
 
 Frontend:
 - zakladka `Oferty pracy`
-- zakladka `Profil kandydata` z sekcyjnym formularzem i historia profili
+- zakladka `Profil kandydata`
 - zakladka `Matching`
-- spójny shell zakladek bez ciezkiego routingu
+- zakladka `CV i list motywacyjny`
+- lekki shell zakladek bez ciezkiego routingu
+
+## Etap 1 generowania dokumentow
+
+W aktualnym etapie dziala tylko generowanie CV:
+- wybierasz zapisany profil,
+- wybierasz zapisana oferte,
+- system korzysta z zapisanego `MatchResult` albo liczy matching inline,
+- generowany jest ustrukturyzowany `ResumeDraft`,
+- UI pokazuje czytelny podglad CV i `ChangeReport`.
+
+List motywacyjny nie jest jeszcze generowany. W zakladce `CV i list motywacyjny` jest tylko informacja, ze ten etap zostanie dodany pozniej.
 
 ## Architektura repo
 
@@ -99,6 +120,34 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
+## Uruchomienie frontendu - Windows
+
+1. Przejdz do katalogu `frontend`:
+
+```powershell
+cd frontend
+```
+
+2. Zainstaluj zaleznosci npm:
+
+```powershell
+npm.cmd install
+```
+
+3. Opcjonalnie ustaw `VITE_API_BASE_URL`, jesli backend nie dziala na `http://127.0.0.1:8000`.
+
+4. Uruchom frontend:
+
+```powershell
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+```
+
+5. Otworz w przegladarce:
+
+```text
+http://127.0.0.1:5173
+```
+
 ## Uruchomienie backendu - Linux
 
 1. Utworz virtualenv:
@@ -133,34 +182,6 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 curl http://127.0.0.1:8000/health
 ```
 
-## Uruchomienie frontendu - Windows
-
-1. Przejdz do katalogu `frontend`:
-
-```powershell
-cd frontend
-```
-
-2. Zainstaluj zaleznosci npm:
-
-```powershell
-npm.cmd install
-```
-
-3. Opcjonalnie ustaw `VITE_API_BASE_URL`, jesli backend nie dziala na `http://127.0.0.1:8000`.
-
-4. Uruchom frontend:
-
-```powershell
-npm.cmd run dev -- --host 127.0.0.1 --port 5173
-```
-
-5. Otworz w przegladarce:
-
-```text
-http://127.0.0.1:5173
-```
-
 ## Uruchomienie frontendu - Linux
 
 1. Przejdz do katalogu `frontend`:
@@ -189,12 +210,6 @@ npm run dev -- --host 127.0.0.1 --port 5173
 http://127.0.0.1:5173
 ```
 
-## CORS
-
-Backend dopuszcza lokalny frontend z originow:
-- `http://localhost:5173`
-- `http://127.0.0.1:5173`
-
 ## Zakladki i glowne flow
 
 ### Oferty pracy
@@ -207,20 +222,27 @@ Backend dopuszcza lokalny frontend z originow:
 - historia ofert z filtrem i podgladem szczegolow
 
 ### Profil kandydata
-- sekcyjny formularz `CandidateProfile` jako glowny sposob pracy
-- pomocniczy podglad raw JSON tylko jako blok techniczny
+- sekcyjny formularz `CandidateProfile`
 - `POST /profile/save`
 - `GET /profile`
 - `GET /profile/{profile_id}`
 - `DELETE /profile/{profile_id}`
-- historia zapisanych profili, usuwanie rekordow i podglad wybranego profilu
+- historia zapisanych profili i podglad wybranego profilu
 
 ### Matching
 - wybor zapisanej oferty i zapisanego profilu
 - `POST /match/analyze`
-- czytelny widok `MatchResult`
 - `POST /match/save`
-- pomocniczy raw JSON tylko jako blok rozwijany
+- czytelny widok `MatchResult`
+
+### CV i list motywacyjny
+- wybor zapisanego profilu
+- wybor zapisanej oferty
+- uzycie zapisanego `MatchResult` albo inline `POST /match/analyze`
+- `POST /resume/generate`
+- czytelny `ResumeDraft`
+- czytelny `ChangeReport`
+- informacja, ze list motywacyjny bedzie dodany w kolejnym etapie
 
 ## Obecny matching
 
@@ -243,6 +265,10 @@ Backend dopuszcza lokalny frontend z originow:
   - co najmniej jedno brakujace `must_have` blokuje rekomendacje `generate`
   - co najmniej dwa brakujace `must_have` daja `do_not_recommend`
 
+## Wymagania zaleznosci backendu
+
+Etap 1 generowania CV nie dodal nowych zaleznosci backendowych. `requirements.txt` zostal zweryfikowany i nie wymagal rozszerzenia.
+
 ## Opcjonalny browser fallback dla parsera ofert
 
 Jesli chcesz wlaczyc browser-based fallback dla trudniejszych stron:
@@ -252,4 +278,3 @@ python -m pip install playwright
 playwright install chromium
 $env:JOB_URL_BROWSER_FALLBACK_ENABLED = "true"
 ```
-

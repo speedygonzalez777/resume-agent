@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes_job import router as job_router
 from app.api.routes_match import router as match_router
 from app.api.routes_profile import router as profile_router
+from app.api.routes_resume import router as resume_router
 from app.db import init_db, reset_database_state
 
 _ALLOWED_FRONTEND_ORIGINS = [
@@ -44,6 +45,7 @@ app.add_middleware(
 app.include_router(profile_router)
 app.include_router(job_router)
 app.include_router(match_router)
+app.include_router(resume_router)
 
 
 @app.get("/")

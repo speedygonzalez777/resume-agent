@@ -30,17 +30,22 @@
 - [x] Dodac proste gating rules dla brakujacych krytycznych `must_have`
 - [x] Dodac maly fix graceful shutdown dla zasobow SQLite
 - [x] Ujednolicic podstawowy shell zakladek i glownych paneli frontendu
+- [x] Dodac `POST /resume/generate` jako stateless endpoint do etapu 1 generowania CV
+- [x] Dodac regulowy truthful-first generator `ResumeDraft` i `ChangeReport`
+- [x] Dodac zakladke `CV i list motywacyjny` z flow CV-only
+- [x] Dodac czytelny podglad `ResumeDraft` i raport zmian w UI
 
 ## Aktualny stan
 - [x] Routery backendowe pozostaja cienkie, a logika jest w `app/services`
 - [x] Modele domenowe w `app/models` nie zostaly przebudowane pod ORM
-- [x] `parse-url` i `match/analyze` nie maja ukrytych side-effectow zapisu
+- [x] `parse-url`, `match/analyze` i `resume/generate` nie maja ukrytych side-effectow zapisu
 - [x] Baza lokalna jest ignorowana przez git (`data/*.db`)
 - [x] Frontend MVP jest cienka warstwa UI nad istniejacym API
-- [x] Frontend ma trzy zakladki:
+- [x] Frontend ma cztery zakladki:
   - `Oferty pracy`
   - `Profil kandydata`
   - `Matching`
+  - `CV i list motywacyjny`
 - [x] Frontend umozliwia:
   - health check backendu
   - parsowanie oferty po URL
@@ -54,16 +59,20 @@
   - uruchomienie `POST /match/analyze`
   - czytelny podglad `MatchResult`
   - zapis wyniku przez `POST /match/save`
+  - wybor zapisanego profilu i oferty do generowania CV
+  - uzycie zapisanego `MatchResult` albo inline matchingu bez auto-zapisu
+  - wygenerowanie `ResumeDraft`
+  - wygenerowanie `ChangeReport`
 
 ## Najblizsze kroki
 - [ ] Dopracowac heurystyki parsera ofert dla dynamicznych portali
 - [ ] Dodac AI matching jako osobna warstwe obok prostego keyword matchera
 - [ ] Dodac prosty UI dla historii zapisanych wynikow matchingu
+- [ ] Dodac persystencje `ResumeDraft` i historii generowan tylko wtedy, gdy bedzie realnie potrzebna
+- [ ] Dodac pierwszy etap generowania listu motywacyjnego
+- [ ] Dodac eksport DOCX/PDF jako osobny, dopracowany etap po ustabilizowaniu draftu CV
 - [ ] Dodac import profilu z pliku lub jawne wczytywanie z JSON jako osobny tryb zaawansowany
-- [ ] Dodac wybor zapisanych rekordow jako wejscia do kolejnych etapow pracy w UI
 - [ ] Dostroic progi i gating matchingu na podstawie realnych ofert i profili testowych
-- [ ] Przygotowac pierwsza wersje `ResumeDraft`
-- [ ] Przygotowac pierwsza wersje `ChangeReport`
 
 ## Poza zakresem tego etapu
 - [ ] duzy frontend z ciezkim routingiem i rozbudowanym design systemem
