@@ -63,6 +63,56 @@ def test_profile_persistence_endpoints(client: TestClient) -> None:
     assert get_after_delete_response.status_code == 404
 
 
+def test_update_candidate_profile_persists_same_id(client: TestClient) -> None:
+    payload = _load_json("candidate_profile_test.json")
+
+    save_response = client.post("/profile/save", json=payload)
+    assert save_response.status_code == 200
+
+    stored_profile = save_response.json()
+    profile_id = stored_profile["id"]
+
+    updated_payload = {
+        **payload,
+        "personal_info": {
+            **payload["personal_info"],
+            "full_name": "Jan Kowalski Updated",
+            "email": "jan.updated@example.com",
+        },
+        "professional_summary_base": "Zaktualizowane podsumowanie zawodowe.",
+        "target_roles": ["Senior Python Developer"],
+    }
+    normalized_updated_payload = CandidateProfile.model_validate(updated_payload).model_dump(mode="json")
+
+    update_response = client.put(f"/profile/{profile_id}", json=updated_payload)
+    assert update_response.status_code == 200
+
+    updated_profile = update_response.json()
+    assert updated_profile["id"] == profile_id
+    assert updated_profile["full_name"] == "Jan Kowalski Updated"
+    assert updated_profile["email"] == "jan.updated@example.com"
+    assert updated_profile["payload"] == normalized_updated_payload
+
+    list_response = client.get("/profile")
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1
+    assert list_response.json()[0]["id"] == profile_id
+    assert list_response.json()[0]["full_name"] == "Jan Kowalski Updated"
+    assert list_response.json()[0]["email"] == "jan.updated@example.com"
+
+    get_response = client.get(f"/profile/{profile_id}")
+    assert get_response.status_code == 200
+    assert get_response.json()["payload"] == normalized_updated_payload
+
+
+def test_update_missing_candidate_profile_returns_404(client: TestClient) -> None:
+    payload = _load_json("candidate_profile_test.json")
+
+    response = client.put("/profile/9999", json=payload)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Candidate profile not found"
+
+
 def test_job_persistence_endpoints(client: TestClient) -> None:
     payload = _load_json("job_posting_test.json")
 

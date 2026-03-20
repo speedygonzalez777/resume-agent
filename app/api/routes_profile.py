@@ -6,7 +6,13 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.models.candidate import CandidateProfile
-from app.services.persistence_service import delete_candidate_profile, get_candidate_profile, list_candidate_profiles, save_candidate_profile
+from app.services.persistence_service import (
+    delete_candidate_profile,
+    get_candidate_profile,
+    list_candidate_profiles,
+    save_candidate_profile,
+    update_candidate_profile,
+)
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -54,6 +60,15 @@ def validate_profile(profile: CandidateProfile) -> dict:
 def save_profile(profile: CandidateProfile) -> StoredCandidateProfileResponse:
     """Persist a candidate profile in SQLite and return stored metadata."""
     return StoredCandidateProfileResponse.model_validate(save_candidate_profile(profile))
+
+
+@router.put("/{profile_id}", response_model=StoredCandidateProfileResponse)
+def update_profile(profile_id: int, profile: CandidateProfile) -> StoredCandidateProfileResponse:
+    """Update one previously stored candidate profile in SQLite."""
+    stored_profile = update_candidate_profile(profile_id, profile)
+    if stored_profile is None:
+        raise HTTPException(status_code=404, detail="Candidate profile not found")
+    return StoredCandidateProfileResponse.model_validate(stored_profile)
 
 
 @router.get("", response_model=list[CandidateProfileListItem])

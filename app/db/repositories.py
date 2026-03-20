@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import desc, select
@@ -19,6 +20,27 @@ def save_candidate_profile_record(*, full_name: str, email: str, payload_json: s
             payload_json=payload_json,
         )
         session.add(record)
+        session.flush()
+        return _candidate_profile_record_to_dict(record, include_payload=True)
+
+
+def update_candidate_profile_record(
+    profile_id: int,
+    *,
+    full_name: str,
+    email: str,
+    payload_json: str,
+) -> dict[str, Any] | None:
+    """Update one candidate profile row in place and return its stored representation."""
+    with session_scope() as session:
+        record = session.get(CandidateProfileRecord, profile_id)
+        if record is None:
+            return None
+
+        record.full_name = full_name
+        record.email = email
+        record.payload_json = payload_json
+        record.saved_at = datetime.now(UTC)
         session.flush()
         return _candidate_profile_record_to_dict(record, include_payload=True)
 

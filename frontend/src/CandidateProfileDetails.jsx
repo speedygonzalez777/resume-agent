@@ -135,7 +135,7 @@ export default function CandidateProfileDetails({ profile }) {
                 </div>
 
                 <div className="detail-section compact-detail-section">
-                  <h5>Osiegniecia</h5>
+                  <h5>Osiągnięcia</h5>
                   {entry.achievements.length > 0 ? (
                     <ul className="detail-list">
                       {entry.achievements.map((item, index) => (
@@ -143,7 +143,7 @@ export default function CandidateProfileDetails({ profile }) {
                       ))}
                     </ul>
                   ) : (
-                    <p className="placeholder">Brak zapisanych osiagniec.</p>
+                    <p className="placeholder">Brak zapisanych osiągnięć.</p>
                   )}
                 </div>
 

@@ -98,12 +98,18 @@ export default function TagListInput({
       {items.length > 0 ? (
         <div className="tag-list-output">
           {items.map((item, index) => (
-            <span key={`${item}-${index}`} className="tag-pill">
-              {item}
-              <button type="button" className="tag-pill-remove" onClick={() => handleRemoveItem(index)}>
-                Usun
+            <div key={`${item}-${index}`} className="tag-list-item">
+              <div className="tag-pill">{item}</div>
+              <button
+                type="button"
+                className="tag-pill-remove"
+                onClick={() => handleRemoveItem(index)}
+                aria-label={`Usun ${item}`}
+                title={`Usun ${item}`}
+              >
+                ×
               </button>
-            </span>
+            </div>
           ))}
         </div>
       ) : (

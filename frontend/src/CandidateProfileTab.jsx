@@ -4,10 +4,17 @@
 
 import { useEffect, useState } from "react";
 
-import { deleteCandidateProfile, getCandidateProfileDetail, listCandidateProfiles, saveCandidateProfile } from "./api";
+import {
+  deleteCandidateProfile,
+  getCandidateProfileDetail,
+  listCandidateProfiles,
+  saveCandidateProfile,
+  updateCandidateProfile,
+} from "./api";
 import CandidateProfileDetails from "./CandidateProfileDetails";
 import CandidateProfileForm, {
   buildCandidateProfilePayload,
+  createCandidateProfileFormStateFromProfile,
   createEmptyCandidateProfileFormState,
 } from "./CandidateProfileForm";
 
@@ -39,6 +46,19 @@ function formatSavedAt(savedAt) {
 }
 
 /**
+ * Build a short human-readable label for the profile currently being edited.
+ *
+ * @param {{id: number, full_name: string, email: string} | null} profile Stored profile metadata.
+ * @returns {string} Readable editing label.
+ */
+function buildEditingProfileLabel(profile) {
+  if (!profile) {
+    return "";
+  }
+  return profile.email ? `${profile.full_name} (${profile.email})` : profile.full_name;
+}
+
+/**
  * Render the profile-management tab used for storing and selecting CandidateProfile records.
  *
  * @returns {JSX.Element} Candidate-profile tab content.
@@ -47,6 +67,8 @@ export default function CandidateProfileTab() {
   const [formValue, setFormValue] = useState(createEmptyCandidateProfileFormState());
   const [message, setMessage] = useState(null);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [lastSavedProfileId, setLastSavedProfileId] = useState(null);
 
   const [profileHistory, setProfileHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -57,6 +79,9 @@ export default function CandidateProfileTab() {
   const [selectedProfileLoading, setSelectedProfileLoading] = useState(false);
   const [selectedProfileError, setSelectedProfileError] = useState(null);
   const [deletingProfileId, setDeletingProfileId] = useState(null);
+  const [editingProfile, setEditingProfile] = useState(null);
+
+  const isEditMode = editingProfile !== null;
 
   /**
    * Refresh the stored candidate profile list from the backend.
@@ -117,6 +142,81 @@ export default function CandidateProfileTab() {
   }
 
   /**
+   * Restore the form to the default new-profile mode.
+   *
+   * @returns {void} No return value.
+   */
+  function resetFormToCreateMode() {
+    setFormValue(createEmptyCandidateProfileFormState());
+    setEditingProfile(null);
+    setHasUnsavedChanges(false);
+    setLastSavedProfileId(null);
+  }
+
+  /**
+   * Update the controlled profile form and mark the draft as unsaved.
+   *
+   * @param {object} nextValue Updated form state.
+   * @returns {void} No return value.
+   */
+  function handleFormChange(nextValue) {
+    setFormValue(nextValue);
+    setHasUnsavedChanges(true);
+
+    if (message !== null) {
+      setMessage(null);
+    }
+  }
+
+  /**
+   * Load one stored profile into the form and switch the UI into edit mode.
+   *
+   * @param {number} profileId Database identifier of the selected stored profile.
+   * @returns {Promise<void>} Promise resolved after the edit mode is ready.
+   */
+  async function handleEditProfileClick(profileId) {
+    setMessage(null);
+    setSelectedProfileId(profileId);
+    setSelectedProfileError(null);
+    setSelectedProfileLoading(true);
+
+    try {
+      const storedProfile = await getCandidateProfileDetail(profileId);
+      setSelectedProfileDetail(storedProfile);
+      setFormValue(createCandidateProfileFormStateFromProfile(storedProfile.payload));
+      setEditingProfile({
+        id: storedProfile.id,
+        full_name: storedProfile.full_name,
+        email: storedProfile.email,
+      });
+      setHasUnsavedChanges(false);
+      setLastSavedProfileId(null);
+      setMessage({
+        type: "info",
+        text: `Edytujesz istniejacy profil ID ${storedProfile.id}. Zapis zaktualizuje ten sam rekord.`,
+      });
+    } catch (error) {
+      setSelectedProfileError(getErrorMessage(error));
+      setMessage({ type: "error", text: `Nie udalo sie wlaczyc edycji profilu. ${getErrorMessage(error)}` });
+    } finally {
+      setSelectedProfileLoading(false);
+    }
+  }
+
+  /**
+   * Exit edit mode and return the form to creating a new profile.
+   *
+   * @returns {void} No return value.
+   */
+  function handleCancelEditClick() {
+    resetFormToCreateMode();
+    setMessage({
+      type: "info",
+      text: "Edycja zostala anulowana. Formularz wrocil do trybu tworzenia nowego profilu.",
+    });
+  }
+
+  /**
    * Save the current form as a CandidateProfile and refresh the profile history.
    *
    * @returns {Promise<void>} Promise resolved after save-related state is updated.
@@ -127,15 +227,36 @@ export default function CandidateProfileTab() {
 
     try {
       const payload = buildCandidateProfilePayload(formValue);
-      const storedProfile = await saveCandidateProfile(payload);
+      const storedProfile = editingProfile
+        ? await updateCandidateProfile(editingProfile.id, payload)
+        : await saveCandidateProfile(payload);
+
+      if (editingProfile) {
+        setEditingProfile({
+          id: storedProfile.id,
+          full_name: storedProfile.full_name,
+          email: storedProfile.email,
+        });
+        setFormValue(createCandidateProfileFormStateFromProfile(storedProfile.payload));
+      }
+
       await refreshProfileHistory();
       await selectStoredProfile(storedProfile.id);
+      setHasUnsavedChanges(false);
+      setLastSavedProfileId(storedProfile.id);
       setMessage({
         type: "success",
-        text: `Profil zostal zapisany z ID ${storedProfile.id}.`,
+        text: editingProfile
+          ? `Profil ID ${storedProfile.id} zostal zaktualizowany. Historia i szczegoly pokazuja juz nowe dane.`
+          : `Profil zostal zapisany. Wszystkie zmiany w formularzu sa juz zapisane. ID: ${storedProfile.id}.`,
       });
     } catch (error) {
-      setMessage({ type: "error", text: getErrorMessage(error) });
+      setMessage({
+        type: "error",
+        text: editingProfile
+          ? `Nie udalo sie zaktualizowac profilu. ${getErrorMessage(error)}`
+          : `Nie udalo sie zapisac profilu. ${getErrorMessage(error)}`,
+      });
     } finally {
       setSaveLoading(false);
     }
@@ -162,6 +283,10 @@ export default function CandidateProfileTab() {
       await deleteCandidateProfile(profileId);
       const refreshedProfiles = await refreshProfileHistory();
       const remainingProfiles = Array.isArray(refreshedProfiles) ? refreshedProfiles : [];
+
+      if (editingProfile?.id === profileId) {
+        resetFormToCreateMode();
+      }
 
       if (selectedProfileId === profileId) {
         if (remainingProfiles.length > 0) {
@@ -195,7 +320,18 @@ export default function CandidateProfileTab() {
 
       <div className="workspace-grid">
         <section className="section-card section-wide">
-          <CandidateProfileForm formValue={formValue} onChange={setFormValue} onSave={handleSaveProfileClick} saveLoading={saveLoading} />
+          <CandidateProfileForm
+            formValue={formValue}
+            onChange={handleFormChange}
+            onSave={handleSaveProfileClick}
+            saveLoading={saveLoading}
+            hasUnsavedChanges={hasUnsavedChanges}
+            lastSavedProfileId={lastSavedProfileId}
+            isEditMode={isEditMode}
+            editingProfileId={editingProfile?.id ?? null}
+            editingProfileLabel={buildEditingProfileLabel(editingProfile)}
+            onCancelEdit={handleCancelEditClick}
+          />
         </section>
 
         <section className="section-card scroll-panel">
@@ -229,17 +365,30 @@ export default function CandidateProfileTab() {
                         <span className="history-company">{profile.email}</span>
                         <span className="history-meta">Zapisano: {formatSavedAt(profile.saved_at)}</span>
                       </button>
-                      <button
-                        type="button"
-                        className="history-delete-button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void handleDeleteProfileClick(profile.id);
-                        }}
-                        disabled={deletingProfileId === profile.id || saveLoading}
-                      >
-                        {deletingProfileId === profile.id ? "Usuwanie..." : "Usun"}
-                      </button>
+                      <div className="history-item-actions">
+                        <button
+                          type="button"
+                          className="ghost-button history-edit-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleEditProfileClick(profile.id);
+                          }}
+                          disabled={selectedProfileLoading || deletingProfileId === profile.id || saveLoading}
+                        >
+                          Edytuj
+                        </button>
+                        <button
+                          type="button"
+                          className="history-delete-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleDeleteProfileClick(profile.id);
+                          }}
+                          disabled={deletingProfileId === profile.id || saveLoading}
+                        >
+                          {deletingProfileId === profile.id ? "Usuwanie..." : "Usun"}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

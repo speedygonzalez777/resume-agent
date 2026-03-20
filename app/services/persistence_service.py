@@ -17,6 +17,7 @@ from app.db.repositories import (
     save_candidate_profile_record,
     save_job_posting_record,
     save_match_result_record,
+    update_candidate_profile_record,
 )
 from app.models.candidate import CandidateProfile
 from app.models.job import JobPosting
@@ -30,6 +31,25 @@ def save_candidate_profile(profile: CandidateProfile) -> dict[str, Any]:
         email=profile.personal_info.email,
         payload_json=_serialize_model(profile),
     )
+    return {
+        "id": record["id"],
+        "saved_at": record["saved_at"],
+        "full_name": record["full_name"],
+        "email": record["email"],
+        "payload": profile,
+    }
+
+
+def update_candidate_profile(profile_id: int, profile: CandidateProfile) -> dict[str, Any] | None:
+    """Update one stored candidate profile and return the refreshed metadata with payload."""
+    record = update_candidate_profile_record(
+        profile_id,
+        full_name=profile.personal_info.full_name,
+        email=profile.personal_info.email,
+        payload_json=_serialize_model(profile),
+    )
+    if record is None:
+        return None
     return {
         "id": record["id"],
         "saved_at": record["saved_at"],

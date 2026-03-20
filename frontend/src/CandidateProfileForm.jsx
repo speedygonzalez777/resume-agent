@@ -2,6 +2,8 @@
  * Sectioned CandidateProfile form used as the main profile entry workflow.
  */
 
+import { useEffect, useState } from "react";
+
 import TagListInput from "./TagListInput";
 
 const UI_ENTRY_ID_FIELD = "__ui_id";
@@ -73,6 +75,16 @@ function normalizeStringList(values) {
 }
 
 /**
+ * Convert a normalized string list into multiline textarea content.
+ *
+ * @param {unknown[]} values Raw list values.
+ * @returns {string} Multiline string used by textarea fields.
+ */
+function joinLines(values) {
+  return normalizeStringList(values).join("\n");
+}
+
+/**
  * Convert textarea content into a trimmed list of lines.
  *
  * @param {string} value Multiline textarea value.
@@ -83,6 +95,20 @@ function splitLines(value) {
     .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+/**
+ * Resolve the current textarea draft for multiline list fields.
+ *
+ * @param {unknown} draftValue UI draft stored directly in form state.
+ * @param {unknown[]} fallbackItems Backend-shaped list used as a backward-compatible fallback.
+ * @returns {string} Current textarea content.
+ */
+function getLineListDraftValue(draftValue, fallbackItems = []) {
+  if (typeof draftValue === "string") {
+    return draftValue;
+  }
+  return joinLines(fallbackItems);
 }
 
 /**
@@ -115,10 +141,36 @@ function createEmptyExperienceEntry() {
     end_date: "",
     is_current: false,
     location: "",
+    responsibilities_text: "",
+    achievements_text: "",
     responsibilities: [],
     achievements: [],
     technologies_used: [],
     keywords: [],
+  };
+}
+
+/**
+ * Clone one experience entry into the frontend form shape used by the editor draft.
+ *
+ * @param {object} entry Existing experience entry.
+ * @returns {object} Safe editable copy of the experience entry.
+ */
+function cloneExperienceEntry(entry) {
+  return {
+    id: normalizeString(entry?.id) || createClientId("exp"),
+    company_name: normalizeString(entry?.company_name),
+    position_title: normalizeString(entry?.position_title),
+    start_date: normalizeString(entry?.start_date),
+    end_date: normalizeString(entry?.end_date),
+    is_current: Boolean(entry?.is_current),
+    location: normalizeString(entry?.location),
+    responsibilities_text: getLineListDraftValue(entry?.responsibilities_text, entry?.responsibilities),
+    achievements_text: getLineListDraftValue(entry?.achievements_text, entry?.achievements),
+    responsibilities: normalizeStringList(entry?.responsibilities),
+    achievements: normalizeStringList(entry?.achievements),
+    technologies_used: normalizeStringList(entry?.technologies_used),
+    keywords: normalizeStringList(entry?.keywords),
   };
 }
 
@@ -133,6 +185,7 @@ function createEmptyProjectEntry() {
     project_name: "",
     role: "",
     description: "",
+    outcomes_text: "",
     technologies_used: [],
     outcomes: [],
     keywords: [],
@@ -230,7 +283,107 @@ export function createEmptyCandidateProfileFormState() {
       forbidden_skills: [],
       forbidden_claims: [],
       forbidden_certificates: [],
+      editing_rules_text: "",
       editing_rules: [],
+    },
+  };
+}
+
+/**
+ * Hydrate backend profile payload into the richer frontend form state.
+ *
+ * @param {object} profile Stored CandidateProfile payload.
+ * @returns {object} Form state ready for controlled editing in the UI.
+ */
+export function createCandidateProfileFormStateFromProfile(profile) {
+  const emptyState = createEmptyCandidateProfileFormState();
+
+  return {
+    personal_info: {
+      full_name: normalizeString(profile?.personal_info?.full_name),
+      email: normalizeString(profile?.personal_info?.email),
+      phone: normalizeString(profile?.personal_info?.phone),
+      location: normalizeString(profile?.personal_info?.location),
+      linkedin_url: normalizeString(profile?.personal_info?.linkedin_url),
+      github_url: normalizeString(profile?.personal_info?.github_url),
+      portfolio_url: normalizeString(profile?.personal_info?.portfolio_url),
+    },
+    target_roles: normalizeStringList(profile?.target_roles),
+    professional_summary_base: normalizeString(profile?.professional_summary_base),
+    experience_entries: Array.isArray(profile?.experience_entries)
+      ? profile.experience_entries.map((entry) => ({
+          id: normalizeString(entry?.id) || createClientId("exp"),
+          company_name: normalizeString(entry?.company_name),
+          position_title: normalizeString(entry?.position_title),
+          start_date: normalizeString(entry?.start_date),
+          end_date: normalizeString(entry?.end_date),
+          is_current: Boolean(entry?.is_current),
+          location: normalizeString(entry?.location),
+          responsibilities_text: joinLines(entry?.responsibilities),
+          achievements_text: joinLines(entry?.achievements),
+          responsibilities: normalizeStringList(entry?.responsibilities),
+          achievements: normalizeStringList(entry?.achievements),
+          technologies_used: normalizeStringList(entry?.technologies_used),
+          keywords: normalizeStringList(entry?.keywords),
+        }))
+      : emptyState.experience_entries,
+    project_entries: Array.isArray(profile?.project_entries)
+      ? profile.project_entries.map((entry) => ({
+          id: normalizeString(entry?.id) || createClientId("project"),
+          project_name: normalizeString(entry?.project_name),
+          role: normalizeString(entry?.role),
+          description: normalizeString(entry?.description),
+          outcomes_text: joinLines(entry?.outcomes),
+          technologies_used: normalizeStringList(entry?.technologies_used),
+          outcomes: normalizeStringList(entry?.outcomes),
+          keywords: normalizeStringList(entry?.keywords),
+          link: normalizeString(entry?.link),
+        }))
+      : emptyState.project_entries,
+    skill_entries: Array.isArray(profile?.skill_entries)
+      ? profile.skill_entries.map((entry) => ({
+          [UI_ENTRY_ID_FIELD]: createUiEntryId("skill"),
+          name: normalizeString(entry?.name),
+          category: normalizeString(entry?.category),
+          level: normalizeString(entry?.level),
+          years_of_experience: entry?.years_of_experience != null ? String(entry.years_of_experience) : "",
+          aliases: normalizeStringList(entry?.aliases),
+          evidence_sources: normalizeStringList(entry?.evidence_sources),
+        }))
+      : emptyState.skill_entries,
+    education_entries: Array.isArray(profile?.education_entries)
+      ? profile.education_entries.map((entry) => ({
+          [UI_ENTRY_ID_FIELD]: createUiEntryId("education"),
+          institution_name: normalizeString(entry?.institution_name),
+          degree: normalizeString(entry?.degree),
+          field_of_study: normalizeString(entry?.field_of_study),
+          start_date: normalizeString(entry?.start_date),
+          end_date: normalizeString(entry?.end_date),
+          is_current: Boolean(entry?.is_current),
+        }))
+      : emptyState.education_entries,
+    language_entries: Array.isArray(profile?.language_entries)
+      ? profile.language_entries.map((entry) => ({
+          [UI_ENTRY_ID_FIELD]: createUiEntryId("language"),
+          language_name: normalizeString(entry?.language_name),
+          proficiency_level: normalizeString(entry?.proficiency_level),
+        }))
+      : emptyState.language_entries,
+    certificate_entries: Array.isArray(profile?.certificate_entries)
+      ? profile.certificate_entries.map((entry) => ({
+          [UI_ENTRY_ID_FIELD]: createUiEntryId("certificate"),
+          certificate_name: normalizeString(entry?.certificate_name),
+          issuer: normalizeString(entry?.issuer),
+          issue_date: normalizeString(entry?.issue_date),
+          notes: normalizeString(entry?.notes),
+        }))
+      : emptyState.certificate_entries,
+    immutable_rules: {
+      forbidden_skills: normalizeStringList(profile?.immutable_rules?.forbidden_skills),
+      forbidden_claims: normalizeStringList(profile?.immutable_rules?.forbidden_claims),
+      forbidden_certificates: normalizeStringList(profile?.immutable_rules?.forbidden_certificates),
+      editing_rules_text: joinLines(profile?.immutable_rules?.editing_rules),
+      editing_rules: normalizeStringList(profile?.immutable_rules?.editing_rules),
     },
   };
 }
@@ -248,8 +401,8 @@ function isEmptyExperienceEntry(entry) {
     normalizeString(entry.start_date),
     normalizeString(entry.end_date),
     normalizeString(entry.location),
-    ...normalizeStringList(entry.responsibilities),
-    ...normalizeStringList(entry.achievements),
+    ...splitLines(getLineListDraftValue(entry.responsibilities_text, entry.responsibilities)),
+    ...splitLines(getLineListDraftValue(entry.achievements_text, entry.achievements)),
     ...normalizeStringList(entry.technologies_used),
     ...normalizeStringList(entry.keywords),
   ].length;
@@ -268,7 +421,7 @@ function isEmptyProjectEntry(entry) {
     normalizeString(entry.description),
     normalizeString(entry.link),
     ...normalizeStringList(entry.technologies_used),
-    ...normalizeStringList(entry.outcomes),
+    ...splitLines(getLineListDraftValue(entry.outcomes_text, entry.outcomes)),
     ...normalizeStringList(entry.keywords),
   ].length;
 }
@@ -360,8 +513,8 @@ export function buildCandidateProfilePayload(formState) {
         end_date: entry.is_current ? null : normalizeOptionalString(entry.end_date),
         is_current: Boolean(entry.is_current),
         location: normalizeString(entry.location),
-        responsibilities: normalizeStringList(entry.responsibilities),
-        achievements: normalizeStringList(entry.achievements),
+        responsibilities: splitLines(getLineListDraftValue(entry.responsibilities_text, entry.responsibilities)),
+        achievements: splitLines(getLineListDraftValue(entry.achievements_text, entry.achievements)),
         technologies_used: normalizeStringList(entry.technologies_used),
         keywords: normalizeStringList(entry.keywords),
       })),
@@ -373,7 +526,7 @@ export function buildCandidateProfilePayload(formState) {
         role: normalizeString(entry.role),
         description: normalizeString(entry.description),
         technologies_used: normalizeStringList(entry.technologies_used),
-        outcomes: normalizeStringList(entry.outcomes),
+        outcomes: splitLines(getLineListDraftValue(entry.outcomes_text, entry.outcomes)),
         keywords: normalizeStringList(entry.keywords),
         link: normalizeOptionalString(entry.link),
       })),
@@ -415,7 +568,9 @@ export function buildCandidateProfilePayload(formState) {
       forbidden_skills: normalizeStringList(formState.immutable_rules.forbidden_skills),
       forbidden_claims: normalizeStringList(formState.immutable_rules.forbidden_claims),
       forbidden_certificates: normalizeStringList(formState.immutable_rules.forbidden_certificates),
-      editing_rules: normalizeStringList(formState.immutable_rules.editing_rules),
+      editing_rules: splitLines(
+        getLineListDraftValue(formState.immutable_rules.editing_rules_text, formState.immutable_rules.editing_rules),
+      ),
     },
   };
 }
@@ -449,18 +604,111 @@ function FormSection({ title, description, summary, defaultOpen = false, childre
 }
 
 /**
- * Render a textarea that stores one list item per line.
+ * Render a compact date range label for repeatable record previews.
+ *
+ * @param {string | null | undefined} startDate Entry start date.
+ * @param {string | null | undefined} endDate Entry end date.
+ * @param {boolean} isCurrent Whether the entry is still active.
+ * @returns {string} Readable date range.
+ */
+function formatEntryDateRange(startDate, endDate, isCurrent = false) {
+  const normalizedStart = normalizeString(startDate) || "brak daty";
+  const normalizedEnd = isCurrent ? "obecnie" : normalizeString(endDate) || "brak daty";
+  return `${normalizedStart} - ${normalizedEnd}`;
+}
+
+/**
+ * Build a readable label used in experience-editing affordances.
+ *
+ * @param {object} entry Experience entry draft.
+ * @param {number} index Entry position used as fallback text.
+ * @returns {string} Human-readable label.
+ */
+function buildExperienceEntryLabel(entry, index) {
+  const positionTitle = normalizeString(entry.position_title) || `Doswiadczenie ${index + 1}`;
+  const companyName = normalizeString(entry.company_name);
+  return companyName ? `${positionTitle} w ${companyName}` : positionTitle;
+}
+
+/**
+ * Build the current save-status banner shown above the profile form.
+ *
+ * @param {boolean} hasUnsavedChanges Whether the form has local edits not yet saved.
+ * @param {number | null} lastSavedProfileId Last successfully saved profile ID.
+ * @param {boolean} hasPendingExperienceDraft Whether one experience draft still needs explicit save or cancel.
+ * @returns {{tone: string, text: string}} Save-status payload.
+ */
+function buildSaveStatus(
+  hasUnsavedChanges,
+  lastSavedProfileId,
+  hasPendingExperienceDraft,
+  isEditMode,
+  editingProfileId,
+  editingProfileLabel,
+) {
+  const profileContext = editingProfileLabel || `profil ID ${editingProfileId}`;
+
+  if (hasPendingExperienceDraft) {
+    return {
+      tone: "warning",
+      text: "Masz otwarty formularz doświadczenia. Najpierw kliknij \"Zapisz doświadczenie\" lub \"Zapisz zmiany\", albo \"Anuluj\", a dopiero potem zapisz cały profil.",
+    };
+  }
+
+  if (isEditMode && hasUnsavedChanges) {
+    return {
+      tone: "warning",
+      text: `Edytujesz istniejący ${profileContext}. Masz niezapisane zmiany. Kliknij "Zapisz zmiany", aby zaktualizowac ten rekord, albo "Anuluj edycje", aby wrocic do nowego profilu.`,
+    };
+  }
+
+  if (isEditMode && lastSavedProfileId === editingProfileId) {
+    return {
+      tone: "success",
+      text: `Edytujesz istniejący ${profileContext}. Ostatnia aktualizacja zostala zapisana w tym samym rekordzie.`,
+    };
+  }
+
+  if (isEditMode) {
+    return {
+      tone: "info",
+      text: `Edytujesz istniejący ${profileContext}. Kliknij "Zapisz zmiany", aby zaktualizowac ten rekord, albo "Anuluj edycje", aby wrocic do tworzenia nowego profilu.`,
+    };
+  }
+
+  if (hasUnsavedChanges) {
+    return {
+      tone: "warning",
+      text: "Masz niezapisane zmiany. Wszystkie sekcje profilu, w tym podsumowanie zawodowe, zapisują się dopiero po kliknieciu \"Zapisz profil\".",
+    };
+  }
+
+  if (lastSavedProfileId != null) {
+    return {
+      tone: "success",
+      text: `Wszystkie zmiany formularza zostaly zapisane. Ostatni zapis ma ID ${lastSavedProfileId}.`,
+    };
+  }
+
+  return {
+    tone: "info",
+    text: "Wszystkie sekcje formularza zapisują się jednym przyciskiem: \"Zapisz profil\".",
+  };
+}
+
+/**
+ * Render a textarea that keeps multiline content in form state until save time.
  *
  * @param {{
  *   label: string,
- *   items: string[],
- *   onChange: (items: string[]) => void,
+ *   value: string,
+ *   onChange: (value: string) => void,
  *   placeholder?: string,
  *   rows?: number,
  * }} props Component props.
  * @returns {JSX.Element} Multiline list editor.
  */
-function LineListField({ label, items, onChange, placeholder = "Kazda linia to osobna pozycja", rows = 4 }) {
+function LineListField({ label, value, onChange, placeholder = "Kazda linia to osobna pozycja", rows = 4 }) {
   return (
     <label className="field">
       <span>{label}</span>
@@ -468,8 +716,8 @@ function LineListField({ label, items, onChange, placeholder = "Kazda linia to o
         className="form-textarea compact-textarea"
         rows={rows}
         placeholder={placeholder}
-        value={(Array.isArray(items) ? items : []).join("\n")}
-        onChange={(event) => onChange(splitLines(event.target.value))}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
       />
     </label>
   );
@@ -483,11 +731,39 @@ function LineListField({ label, items, onChange, placeholder = "Kazda linia to o
  *   onChange: (nextValue: object) => void,
  *   onSave: () => void,
  *   saveLoading: boolean,
+ *   hasUnsavedChanges: boolean,
+ *   lastSavedProfileId: number | null,
+ *   isEditMode: boolean,
+ *   editingProfileId: number | null,
+ *   editingProfileLabel: string,
+ *   onCancelEdit: () => void,
  * }} props Component props.
  * @returns {JSX.Element} Candidate-profile form.
  */
-export default function CandidateProfileForm({ formValue, onChange, onSave, saveLoading }) {
+export default function CandidateProfileForm({
+  formValue,
+  onChange,
+  onSave,
+  saveLoading,
+  hasUnsavedChanges,
+  lastSavedProfileId,
+  isEditMode,
+  editingProfileId,
+  editingProfileLabel,
+  onCancelEdit,
+}) {
   const profilePreview = buildCandidateProfilePayload(formValue);
+  const [experienceDraft, setExperienceDraft] = useState(null);
+  const [highlightedExperienceEntryId, setHighlightedExperienceEntryId] = useState(null);
+  const isProfileSaveBlockedByExperienceDraft = experienceDraft !== null;
+  const saveStatus = buildSaveStatus(
+    hasUnsavedChanges,
+    lastSavedProfileId,
+    isProfileSaveBlockedByExperienceDraft,
+    isEditMode,
+    editingProfileId,
+    editingProfileLabel,
+  );
 
   /**
    * Update one field inside `personal_info`.
@@ -577,7 +853,7 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
    * Update one list field inside `immutable_rules`.
    *
    * @param {string} fieldName Immutable rules field name.
-   * @param {string[]} values Updated list values.
+   * @param {string | string[]} values Updated field value.
    * @returns {void} No return value.
    */
   function updateImmutableRules(fieldName, values) {
@@ -590,17 +866,219 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
     });
   }
 
+  useEffect(() => {
+    setExperienceDraft(null);
+    setHighlightedExperienceEntryId(null);
+  }, [editingProfileId, isEditMode]);
+
+  /**
+   * Clear the local experience draft when its source entry disappears from the list.
+   *
+   * @returns {void} No return value.
+   */
+  useEffect(() => {
+    if (experienceDraft?.mode !== "edit") {
+      return;
+    }
+
+    const hasSourceEntry = formValue.experience_entries.some((entry) => entry.id === experienceDraft.value.id);
+    if (!hasSourceEntry) {
+      setExperienceDraft(null);
+    }
+  }, [experienceDraft, formValue.experience_entries]);
+
+  /**
+   * Check whether the current experience draft contains unsaved changes.
+   *
+   * @returns {boolean} True when discarding the draft would lose user input.
+   */
+  function hasUnsavedExperienceDraftChanges() {
+    if (!experienceDraft) {
+      return false;
+    }
+
+    if (experienceDraft.mode === "create") {
+      return !isEmptyExperienceEntry(experienceDraft.value);
+    }
+
+    const originalEntry = formValue.experience_entries.find((entry) => entry.id === experienceDraft.value.id);
+    if (!originalEntry) {
+      return !isEmptyExperienceEntry(experienceDraft.value);
+    }
+
+    return JSON.stringify(cloneExperienceEntry(originalEntry)) !== JSON.stringify(cloneExperienceEntry(experienceDraft.value));
+  }
+
+  /**
+   * Ask for confirmation before discarding the current experience draft when needed.
+   *
+   * @returns {boolean} True when it is safe to replace the draft.
+   */
+  function confirmExperienceDraftDiscard() {
+    if (!hasUnsavedExperienceDraftChanges()) {
+      return true;
+    }
+
+    return window.confirm("Masz niezapisane zmiany w formularzu doświadczenia. Czy chcesz je porzucić?");
+  }
+
+  /**
+   * Start a new experience draft that is not yet added to the profile list.
+   *
+   * @returns {void} No return value.
+   */
+  function handleAddExperienceEntry() {
+    if (!confirmExperienceDraftDiscard()) {
+      return;
+    }
+
+    setExperienceDraft({
+      mode: "create",
+      value: createEmptyExperienceEntry(),
+    });
+    setHighlightedExperienceEntryId(null);
+  }
+
+  /**
+   * Start editing one existing saved experience entry from the list.
+   *
+   * @param {number} index Entry index to edit.
+   * @returns {void} No return value.
+   */
+  function handleEditExperienceEntry(index) {
+    const entry = formValue.experience_entries[index];
+    if (!entry) {
+      return;
+    }
+
+    if (!confirmExperienceDraftDiscard()) {
+      return;
+    }
+
+    setExperienceDraft({
+      mode: "edit",
+      sourceEntryId: entry.id,
+      value: cloneExperienceEntry(entry),
+    });
+    setHighlightedExperienceEntryId(entry.id);
+  }
+
+  /**
+   * Update one field inside the local experience draft.
+   *
+   * @param {string} fieldName Experience field name.
+   * @param {unknown} value New draft value.
+   * @returns {void} No return value.
+   */
+  function updateExperienceDraftField(fieldName, value) {
+    setExperienceDraft((currentDraft) =>
+      currentDraft
+        ? {
+            ...currentDraft,
+            value: {
+              ...currentDraft.value,
+              [fieldName]: value,
+            },
+          }
+        : currentDraft,
+    );
+  }
+
+  /**
+   * Save the current experience draft to the profile list and close the editor.
+   *
+   * @returns {void} No return value.
+   */
+  function handleSaveExperienceDraft() {
+    if (!experienceDraft) {
+      return;
+    }
+
+    const savedEntry = cloneExperienceEntry(experienceDraft.value);
+    const nextExperienceEntries =
+      experienceDraft.mode === "edit"
+        ? formValue.experience_entries.map((entry) => (entry.id === experienceDraft.sourceEntryId ? savedEntry : entry))
+        : [...formValue.experience_entries, savedEntry];
+
+    onChange({
+      ...formValue,
+      experience_entries: nextExperienceEntries,
+    });
+    setExperienceDraft(null);
+    setHighlightedExperienceEntryId(savedEntry.id);
+  }
+
+  /**
+   * Discard the local experience draft and return to the list-only state.
+   *
+   * @returns {void} No return value.
+   */
+  function handleCancelExperienceDraft() {
+    if (!experienceDraft) {
+      return;
+    }
+
+    setHighlightedExperienceEntryId(experienceDraft.mode === "edit" ? experienceDraft.sourceEntryId : null);
+    setExperienceDraft(null);
+  }
+
+  /**
+   * Remove one experience record after explicit user confirmation.
+   *
+   * @param {number} index Entry index to remove.
+   * @returns {void} No return value.
+   */
+  function handleRemoveExperienceEntry(index) {
+    const entry = formValue.experience_entries[index];
+    if (!entry) {
+      return;
+    }
+
+    const label = buildExperienceEntryLabel(entry, index);
+    if (!window.confirm(`Czy na pewno usunac wpis: ${label}?`)) {
+      return;
+    }
+
+    if (experienceDraft?.mode === "edit" && experienceDraft.sourceEntryId === entry.id) {
+      setExperienceDraft(null);
+    }
+
+    if (highlightedExperienceEntryId === entry.id) {
+      setHighlightedExperienceEntryId(null);
+    }
+
+    removeCollectionEntry("experience_entries", index);
+  }
+
   return (
     <div className="profile-form-stack">
       <div className="section-header section-header-inline">
         <div>
-          <h3>Formularz profilu</h3>
-          <p className="section-copy">Uzupelnij profil kandydata i zapisz go do dalszej analizy.</p>
+          <h3>{isEditMode ? "Edycja profilu" : "Formularz profilu"}</h3>
+          <p className="section-copy">
+            {isEditMode
+              ? `Aktualizujesz istniejacy rekord${editingProfileId != null ? ` o ID ${editingProfileId}` : ""}.`
+              : "Uzupelnij profil kandydata i zapisz go do dalszej analizy."}
+          </p>
         </div>
-        <button type="button" className="primary-button" onClick={onSave} disabled={saveLoading}>
-          {saveLoading ? "Zapisywanie..." : "Zapisz profil"}
-        </button>
+        <div className="actions profile-form-header-actions">
+          {isEditMode ? (
+            <button type="button" className="ghost-button" onClick={onCancelEdit} disabled={saveLoading}>
+              Anuluj edycje
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onSave}
+            disabled={saveLoading || isProfileSaveBlockedByExperienceDraft}
+          >
+            {saveLoading ? "Zapisywanie..." : isEditMode ? "Zapisz zmiany" : "Zapisz profil"}
+          </button>
+        </div>
       </div>
+
+      <div className={`message ${saveStatus.tone}`}>{saveStatus.text}</div>
 
       <FormSection title="Dane podstawowe" description="Najwazniejsze dane kontaktowe i linki." defaultOpen>
         <div className="form-grid">
@@ -703,27 +1181,95 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
         defaultOpen
       >
         <div className="section-toolbar">
-          <button type="button" className="ghost-button" onClick={() => addCollectionEntry("experience_entries", createEmptyExperienceEntry)}>
+          <button type="button" className="ghost-button" onClick={handleAddExperienceEntry}>
             Dodaj doswiadczenie
           </button>
         </div>
 
-        {formValue.experience_entries.length > 0 ? (
+        {formValue.experience_entries.length > 0 || experienceDraft ? (
           <div className="record-list">
-            {formValue.experience_entries.map((entry, index) => (
-              <article key={entry.id} className="record-card">
+            {formValue.experience_entries.length > 0 ? (
+              <div className="record-list experience-summary-list">
+                {formValue.experience_entries.map((entry, index) => {
+                  const isActive =
+                    highlightedExperienceEntryId === entry.id ||
+                    (experienceDraft?.mode === "edit" && experienceDraft.sourceEntryId === entry.id);
+                  const responsibilityCount = splitLines(
+                    getLineListDraftValue(entry.responsibilities_text, entry.responsibilities),
+                  ).length;
+                  const achievementsCount = splitLines(
+                    getLineListDraftValue(entry.achievements_text, entry.achievements),
+                  ).length;
+
+                  return (
+                    <article key={entry.id} className={`record-card compact-record-card${isActive ? " active-record-card" : ""}`}>
+                      <div className="record-card-header">
+                        <div>
+                          <h4>{entry.position_title || `Doswiadczenie ${index + 1}`}</h4>
+                          <p>{entry.company_name || "Nowy wpis"}</p>
+                        </div>
+
+                        <div className="record-card-actions">
+                          <button type="button" className="ghost-button" onClick={() => handleEditExperienceEntry(index)}>
+                            {experienceDraft?.mode === "edit" && experienceDraft.sourceEntryId === entry.id ? "Edytujesz" : "Edytuj"}
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-button danger-ghost-button"
+                            onClick={() => handleRemoveExperienceEntry(index)}
+                          >
+                            Usun
+                          </button>
+                        </div>
+                      </div>
+
+                      <dl className="detail-grid record-preview-grid">
+                        <div>
+                          <dt>Zakres dat</dt>
+                          <dd>{formatEntryDateRange(entry.start_date, entry.end_date, entry.is_current)}</dd>
+                        </div>
+                        <div>
+                          <dt>Lokalizacja</dt>
+                          <dd>{entry.location || "Brak lokalizacji"}</dd>
+                        </div>
+                        <div>
+                          <dt>Obowiazki</dt>
+                          <dd>{responsibilityCount > 0 ? `${responsibilityCount} pozycji` : "Brak"}</dd>
+                        </div>
+                        <div>
+                          <dt>Osiągnięcia</dt>
+                          <dd>{achievementsCount > 0 ? `${achievementsCount} pozycji` : "Brak"}</dd>
+                        </div>
+                      </dl>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="placeholder">Brak jeszcze zapisanych wpisow doswiadczenia.</p>
+            )}
+
+            {experienceDraft ? (
+              <article className="record-card record-editor-card">
                 <div className="record-card-header">
                   <div>
-                    <h4>{entry.position_title || `Doswiadczenie ${index + 1}`}</h4>
-                    <p>{entry.company_name || "Nowy wpis"}</p>
+                    <h4>{experienceDraft.mode === "edit" ? "Edytowane doswiadczenie" : "Nowe doswiadczenie"}</h4>
+                    <p>
+                      {experienceDraft.mode === "edit"
+                        ? buildExperienceEntryLabel(
+                            experienceDraft.value,
+                            formValue.experience_entries.findIndex((entry) => entry.id === experienceDraft.sourceEntryId),
+                          )
+                        : "Wypelnij formularz i kliknij \"Zapisz doswiadczenie\", aby dodac wpis do listy."}
+                    </p>
                   </div>
-                  <button
-                    type="button"
-                    className="ghost-button danger-ghost-button"
-                    onClick={() => removeCollectionEntry("experience_entries", index)}
-                  >
-                    Usun
-                  </button>
+                  <span className="section-count-badge">
+                    {formatEntryDateRange(
+                      experienceDraft.value.start_date,
+                      experienceDraft.value.end_date,
+                      experienceDraft.value.is_current,
+                    )}
+                  </span>
                 </div>
 
                 <div className="form-grid">
@@ -731,8 +1277,8 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
                     <span>Firma</span>
                     <input
                       type="text"
-                      value={entry.company_name}
-                      onChange={(event) => updateCollectionEntry("experience_entries", index, "company_name", event.target.value)}
+                      value={experienceDraft.value.company_name}
+                      onChange={(event) => updateExperienceDraftField("company_name", event.target.value)}
                     />
                   </label>
 
@@ -740,8 +1286,8 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
                     <span>Stanowisko</span>
                     <input
                       type="text"
-                      value={entry.position_title}
-                      onChange={(event) => updateCollectionEntry("experience_entries", index, "position_title", event.target.value)}
+                      value={experienceDraft.value.position_title}
+                      onChange={(event) => updateExperienceDraftField("position_title", event.target.value)}
                     />
                   </label>
 
@@ -749,8 +1295,8 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
                     <span>Data rozpoczecia</span>
                     <input
                       type="date"
-                      value={entry.start_date}
-                      onChange={(event) => updateCollectionEntry("experience_entries", index, "start_date", event.target.value)}
+                      value={experienceDraft.value.start_date}
+                      onChange={(event) => updateExperienceDraftField("start_date", event.target.value)}
                     />
                   </label>
 
@@ -758,9 +1304,9 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
                     <span>Data zakonczenia</span>
                     <input
                       type="date"
-                      value={entry.end_date}
-                      disabled={entry.is_current}
-                      onChange={(event) => updateCollectionEntry("experience_entries", index, "end_date", event.target.value)}
+                      value={experienceDraft.value.end_date}
+                      disabled={experienceDraft.value.is_current}
+                      onChange={(event) => updateExperienceDraftField("end_date", event.target.value)}
                     />
                   </label>
 
@@ -768,8 +1314,8 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
                     <span>Lokalizacja</span>
                     <input
                       type="text"
-                      value={entry.location}
-                      onChange={(event) => updateCollectionEntry("experience_entries", index, "location", event.target.value)}
+                      value={experienceDraft.value.location}
+                      onChange={(event) => updateExperienceDraftField("location", event.target.value)}
                     />
                   </label>
                 </div>
@@ -777,45 +1323,65 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
                 <label className="checkbox-field">
                   <input
                     type="checkbox"
-                    checked={entry.is_current}
-                    onChange={(event) => updateCollectionEntry("experience_entries", index, "is_current", event.target.checked)}
+                    checked={experienceDraft.value.is_current}
+                    onChange={(event) => updateExperienceDraftField("is_current", event.target.checked)}
                   />
                   <span>To jest moje obecne stanowisko</span>
                 </label>
 
                 <LineListField
                   label="Zakres obowiazkow"
-                  items={entry.responsibilities}
-                  onChange={(items) => updateCollectionEntry("experience_entries", index, "responsibilities", items)}
+                  value={getLineListDraftValue(
+                    experienceDraft.value.responsibilities_text,
+                    experienceDraft.value.responsibilities,
+                  )}
+                  onChange={(value) => updateExperienceDraftField("responsibilities_text", value)}
                   placeholder="Kazda linia to osobny obowiazek"
                 />
 
                 <LineListField
-                  label="Osiegniecia"
-                  items={entry.achievements}
-                  onChange={(items) => updateCollectionEntry("experience_entries", index, "achievements", items)}
-                  placeholder="Kazda linia to osobne osiagniecie"
+                  label="Osiągnięcia"
+                  value={getLineListDraftValue(experienceDraft.value.achievements_text, experienceDraft.value.achievements)}
+                  onChange={(value) => updateExperienceDraftField("achievements_text", value)}
+                  placeholder="Kazda linia to osobne osiągnięcie"
                 />
 
                 <div className="form-grid">
                   <TagListInput
                     label="Technologie"
-                    items={entry.technologies_used}
-                    onChange={(items) => updateCollectionEntry("experience_entries", index, "technologies_used", items)}
+                    items={experienceDraft.value.technologies_used}
+                    onChange={(items) => updateExperienceDraftField("technologies_used", items)}
                     placeholder="Np. Python"
                     addLabel="Dodaj technologie"
                   />
 
                   <TagListInput
                     label="Slowa kluczowe"
-                    items={entry.keywords}
-                    onChange={(items) => updateCollectionEntry("experience_entries", index, "keywords", items)}
+                    items={experienceDraft.value.keywords}
+                    onChange={(items) => updateExperienceDraftField("keywords", items)}
                     placeholder="Np. API"
                     addLabel="Dodaj slowo"
                   />
                 </div>
+
+                <div className="actions experience-editor-actions">
+                  <button type="button" className="ghost-button" onClick={handleCancelExperienceDraft}>
+                    Anuluj
+                  </button>
+                  <button type="button" className="primary-button" onClick={handleSaveExperienceDraft}>
+                    {experienceDraft.mode === "edit" ? "Zapisz zmiany" : "Zapisz doświadczenie"}
+                  </button>
+                </div>
+
+                <p className="helper-text">
+                  Ten wpis nie trafi do listy doświadczeń ani do zapisu profilu, dopóki nie klikniesz
+                  {" "}
+                  {experienceDraft.mode === "edit" ? "\"Zapisz zmiany\"" : "\"Zapisz doświadczenie\""}
+                  {" "}
+                  albo "Anuluj".
+                </p>
               </article>
-            ))}
+            ) : null}
           </div>
         ) : (
           <p className="placeholder">Dodaj pierwsze doswiadczenie zawodowe.</p>
@@ -892,8 +1458,8 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
 
                 <LineListField
                   label="Rezultaty"
-                  items={entry.outcomes}
-                  onChange={(items) => updateCollectionEntry("project_entries", index, "outcomes", items)}
+                  value={getLineListDraftValue(entry.outcomes_text, entry.outcomes)}
+                  onChange={(value) => updateCollectionEntry("project_entries", index, "outcomes_text", value)}
                   placeholder="Kazda linia to osobny rezultat"
                 />
 
@@ -1269,8 +1835,11 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
 
           <LineListField
             label="Zasady edycji"
-            items={formValue.immutable_rules.editing_rules}
-            onChange={(items) => updateImmutableRules("editing_rules", items)}
+            value={getLineListDraftValue(
+              formValue.immutable_rules.editing_rules_text,
+              formValue.immutable_rules.editing_rules,
+            )}
+            onChange={(value) => updateImmutableRules("editing_rules_text", value)}
             placeholder="Kazda linia to osobna zasada"
             rows={4}
           />
@@ -1283,8 +1852,18 @@ export default function CandidateProfileForm({ formValue, onChange, onSave, save
       </details>
 
       <div className="actions section-actions-bottom">
-        <button type="button" className="primary-button" onClick={onSave} disabled={saveLoading}>
-          {saveLoading ? "Zapisywanie..." : "Zapisz profil"}
+        {isEditMode ? (
+          <button type="button" className="ghost-button" onClick={onCancelEdit} disabled={saveLoading}>
+            Anuluj edycje
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="primary-button"
+          onClick={onSave}
+          disabled={saveLoading || isProfileSaveBlockedByExperienceDraft}
+        >
+          {saveLoading ? "Zapisywanie..." : isEditMode ? "Zapisz zmiany" : "Zapisz profil"}
         </button>
       </div>
     </div>

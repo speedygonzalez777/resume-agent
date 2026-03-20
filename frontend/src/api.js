@@ -15,6 +15,97 @@ function buildApiUrl(path) {
 }
 
 /**
+ * Format one FastAPI or Pydantic validation path into a readable dotted label.
+ *
+ * @param {unknown} location Raw `loc` value returned by the backend.
+ * @returns {string} Human-readable field path.
+ */
+function formatErrorLocation(location) {
+  if (!Array.isArray(location)) {
+    return "";
+  }
+
+  return location
+    .filter((part) => part !== "body" && part !== "query" && part !== "path")
+    .map((part) => String(part))
+    .join(".");
+}
+
+/**
+ * Convert one structured backend error item into a readable line.
+ *
+ * @param {unknown} detailItem Raw detail item returned by the backend.
+ * @returns {string | null} User-facing error line or null when unavailable.
+ */
+function formatStructuredDetailItem(detailItem) {
+  if (typeof detailItem === "string") {
+    return detailItem;
+  }
+
+  if (!detailItem || typeof detailItem !== "object") {
+    return null;
+  }
+
+  const message =
+    typeof detailItem.msg === "string"
+      ? detailItem.msg
+      : typeof detailItem.message === "string"
+        ? detailItem.message
+        : typeof detailItem.error === "string"
+          ? detailItem.error
+          : null;
+
+  if (!message) {
+    return null;
+  }
+
+  const location = formatErrorLocation(detailItem.loc);
+  return location ? `${location}: ${message}` : message;
+}
+
+/**
+ * Normalize any backend error payload into readable UI text.
+ *
+ * @param {unknown} payload Parsed backend payload.
+ * @returns {string} User-facing error text.
+ */
+function extractErrorMessage(payload) {
+  if (!payload || typeof payload !== "object") {
+    return "Backend request failed.";
+  }
+
+  const detail = payload.detail ?? payload.message ?? payload.error;
+
+  if (typeof detail === "string" && detail) {
+    return detail;
+  }
+
+  if (Array.isArray(detail)) {
+    const messages = detail.map(formatStructuredDetailItem).filter(Boolean);
+    if (messages.length > 0) {
+      return `Niepoprawne dane formularza: ${messages.join(" | ")}`;
+    }
+  }
+
+  if (detail && typeof detail === "object") {
+    const structuredMessage = formatStructuredDetailItem(detail);
+    if (structuredMessage) {
+      return structuredMessage;
+    }
+  }
+
+  if (typeof payload.message === "string" && payload.message) {
+    return payload.message;
+  }
+
+  if (typeof payload.error === "string" && payload.error) {
+    return payload.error;
+  }
+
+  return "Backend request failed.";
+}
+
+/**
  * Read a JSON response and convert HTTP failures into readable errors.
  *
  * @param {Response} response Raw Fetch API response.
@@ -24,13 +115,7 @@ function buildApiUrl(path) {
 async function readJson(response) {
   const payload = await response.json();
   if (!response.ok) {
-    const message =
-      payload?.detail?.message ??
-      payload?.detail?.error ??
-      payload?.detail ??
-      payload?.message ??
-      "Backend request failed.";
-    throw new Error(String(message));
+    throw new Error(extractErrorMessage(payload));
   }
   return payload;
 }
@@ -127,6 +212,24 @@ export async function deleteJobPosting(jobPostingId) {
 export async function saveCandidateProfile(profile) {
   const response = await fetch(buildApiUrl("/profile/save"), {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(profile),
+  });
+  return /** @type {Promise<object>} */ (readJson(response));
+}
+
+/**
+ * Update one existing candidate profile through the backend persistence endpoint.
+ *
+ * @param {number} profileId Database identifier of the stored candidate profile.
+ * @param {object} profile CandidateProfile payload.
+ * @returns {Promise<object>} Updated candidate profile response from the backend.
+ */
+export async function updateCandidateProfile(profileId, profile) {
+  const response = await fetch(buildApiUrl(`/profile/${profileId}`), {
+    method: "PUT",
     headers: {
       "Content-Type": "application/json",
     },

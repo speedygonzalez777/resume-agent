@@ -325,6 +325,16 @@ pre {
   color: #166534;
 }
 
+.message.info {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.message.warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .message.error {
   background: #fee2e2;
   color: #991b1b;
@@ -653,6 +663,17 @@ pre {
   font-size: 0.84rem;
 }
 
+.history-item-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-edit-button,
+.history-delete-button {
+  white-space: nowrap;
+}
+
 .record-meta-grid {
   margin-bottom: 18px;
 }
@@ -728,6 +749,12 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.profile-form-header-actions {
+  margin-top: 0;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .profile-form-section {
@@ -837,6 +864,11 @@ pre {
   gap: 12px;
 }
 
+.active-record-card {
+  border-color: #0f766e;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.12);
+}
+
 .record-card h4,
 .detail-section h5,
 .compact-detail-section h5,
@@ -855,6 +887,25 @@ pre {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
+}
+
+.record-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.record-preview-grid {
+  margin: 0;
+}
+
+.experience-summary-list {
+  gap: 12px;
+}
+
+.record-editor-card {
+  border-style: dashed;
 }
 
 .danger-ghost-button {
@@ -889,14 +940,24 @@ pre {
 .tag-list-output {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: 8px;
+}
+
+.tag-list-item {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .tag-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  padding: 4px 12px;
   border-radius: 999px;
   background: #dbeafe;
   color: #1e3a8a;
@@ -905,12 +966,30 @@ pre {
 }
 
 .tag-pill-remove {
-  border: 0;
-  background: transparent;
-  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fff1f2;
+  color: #b91c1c;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   font-weight: 700;
+  line-height: 1;
+}
+
+.tag-pill-remove:hover:not(:disabled) {
+  border-color: #fda4af;
+  background: #ffe4e6;
+}
+
+.experience-editor-actions {
+  justify-content: flex-end;
 }
 
 .advanced-grid,
