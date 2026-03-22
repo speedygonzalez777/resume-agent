@@ -1,7 +1,24 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
+
+
+class ResumeGenerationMode(str, Enum):
+    OPENAI_STRUCTURED = "openai_structured"
+    RULE_BASED_FALLBACK = "rule_based_fallback"
+
+
+class ResumeMatchResultSource(str, Enum):
+    PROVIDED = "provided"
+    COMPUTED = "computed"
+
+
+class ResumeFallbackReason(str, Enum):
+    MISSING_API_KEY = "missing_api_key"
+    OPENAI_ERROR = "openai_error"
+    INVALID_AI_OUTPUT = "invalid_ai_output"
 
 
 class ResumeHeader(BaseModel):
@@ -35,6 +52,14 @@ class ResumeExperienceEntry(BaseModel):
         default_factory=list,
         description="Słowa kluczowe uwypuklone w tym wpisie"
     )
+    relevance_note: Optional[str] = Field(
+        default=None,
+        description="Krótka notatka wyjaśniająca, dlaczego wpis został wybrany"
+    )
+    source_highlights: List[str] = Field(
+        default_factory=list,
+        description="Krótkie fragmenty źródłowe z profilu, na których oparto redakcję wpisu"
+    )
 
 
 class ResumeProjectEntry(BaseModel):
@@ -51,6 +76,14 @@ class ResumeProjectEntry(BaseModel):
     highlighted_keywords: List[str] = Field(
         default_factory=list,
         description="Słowa kluczowe uwypuklone w projekcie"
+    )
+    relevance_note: Optional[str] = Field(
+        default=None,
+        description="Krótka notatka wyjaśniająca, dlaczego projekt został wybrany"
+    )
+    source_highlights: List[str] = Field(
+        default_factory=list,
+        description="Krótkie fragmenty źródłowe z profilu, na których oparto redakcję projektu"
     )
 
 
@@ -95,6 +128,18 @@ class ChangeReport(BaseModel):
 
 class ResumeDraft(BaseModel):
     header: ResumeHeader
+    target_job_title: Optional[str] = Field(
+        default=None,
+        description="Tytuł stanowiska, pod które przygotowano draft CV"
+    )
+    target_company_name: Optional[str] = Field(
+        default=None,
+        description="Nazwa firmy, pod którą przygotowano draft CV"
+    )
+    fit_summary: Optional[str] = Field(
+        default=None,
+        description="Krótkie podsumowanie dopasowania i akcentów draftu"
+    )
     professional_summary: Optional[str] = Field(
         default=None,
         description="Opcjonalne podsumowanie zawodowe"
@@ -122,6 +167,10 @@ class ResumeDraft(BaseModel):
     selected_certificate_entries: List[str] = Field(
         default_factory=list,
         description="Certyfikaty wybrane do CV"
+    )
+    selected_keywords: List[str] = Field(
+        default_factory=list,
+        description="Wybrane słowa kluczowe z oferty, które warto eksponować w draftcie"
     )
     keyword_usage: List[str] = Field(
         default_factory=list,

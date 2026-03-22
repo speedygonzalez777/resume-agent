@@ -86,35 +86,46 @@ Backend:
 Frontend:
 - `VITE_API_BASE_URL` - opcjonalny URL backendu, domyslnie `http://127.0.0.1:8000`
 
+## Virtualenv
+
+- docelowe developerskie srodowisko backendu to lokalne `.venv` zbudowane jawnie na Pythonie 3.12
+- jesli masz stare `.venv` zbudowane na innej wersji Pythona, usun je i utworz ponownie komenda dla 3.12 z sekcji ponizej
+
 ## Uruchomienie backendu - Windows
 
-1. Utworz virtualenv, jesli jeszcze go nie masz:
+1. Sprawdz, czy Python 3.12 jest dostepny przez launcher `py`:
 
 ```powershell
-python -m venv .venv
+py -3.12 --version
 ```
 
-2. Aktywuj virtualenv:
+2. Utworz virtualenv na Pythonie 3.12:
+
+```powershell
+py -3.12 -m venv .venv
+```
+
+3. Aktywuj virtualenv:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-3. Zainstaluj zaleznosci backendu:
+4. Zainstaluj zaleznosci backendu:
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-4. Ustaw wymagane env vars, przede wszystkim `OPENAI_API_KEY`.
+5. Ustaw wymagane env vars, przede wszystkim `OPENAI_API_KEY`.
 
-5. Uruchom backend:
+6. Uruchom backend:
 
 ```powershell
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-6. Sprawdz health check:
+7. Sprawdz health check:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/health
@@ -150,37 +161,61 @@ http://127.0.0.1:5173
 
 ## Uruchomienie backendu - Linux
 
-1. Utworz virtualenv:
+1. Sprawdz, czy `python3.12` jest dostepny:
 
 ```bash
-python3 -m venv .venv
+python3.12 --version
 ```
 
-2. Aktywuj virtualenv:
+2. Utworz virtualenv na Pythonie 3.12:
+
+```bash
+python3.12 -m venv .venv
+```
+
+3. Aktywuj virtualenv:
 
 ```bash
 source .venv/bin/activate
 ```
 
-3. Zainstaluj zaleznosci backendu:
+4. Zainstaluj zaleznosci backendu:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-4. Ustaw wymagane env vars, przede wszystkim `OPENAI_API_KEY`.
+5. Ustaw wymagane env vars, przede wszystkim `OPENAI_API_KEY`.
 
-5. Uruchom backend:
+6. Uruchom backend:
 
 ```bash
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-6. Sprawdz health check:
+7. Sprawdz health check:
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
+
+## Testy backendu
+
+Po aktywacji `.venv` rekomendowana komenda to:
+
+```bash
+python -m pytest -q
+```
+
+Wspierane jest tez bezposrednie:
+
+```bash
+pytest -q
+```
+
+Bez aktywacji virtualenv mozesz uzyc interpretera z `.venv` wprost:
+- Linux: `./.venv/bin/python -m pytest -q`
+- Windows: `.\.venv\Scripts\python -m pytest -q`
 
 ## Uruchomienie frontendu - Linux
 

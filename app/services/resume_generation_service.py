@@ -1,10 +1,12 @@
-"""Rule-based truthful-first generation of ResumeDraft and ChangeReport."""
+"""Truthful-first generation of ResumeDraft and ChangeReport with safe AI fallback."""
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Iterable
 
+from app.models.analysis import MatchAnalysisRequest
 from app.models.candidate import CandidateProfile, ExperienceEntry, ProjectEntry
 from app.models.job import JobPosting, Requirement
 from app.models.match import MatchResult, RequirementMatch
@@ -12,8 +14,17 @@ from app.models.resume import (
     ChangeReport,
     ResumeDraft,
     ResumeExperienceEntry,
+    ResumeFallbackReason,
+    ResumeGenerationMode,
     ResumeHeader,
+    ResumeMatchResultSource,
     ResumeProjectEntry,
+)
+from app.services.match_service import analyze_match_basic
+from app.services.openai_resume_tailoring_service import (
+    OpenAIResumeTailoringOutput,
+    ResumeTailoringOpenAIError,
+    generate_resume_tailoring_with_openai,
 )
 
 _IMPORTANCE_RELEVANCE = {
@@ -32,6 +43,42 @@ _MAX_SELECTED_SKILLS = 10
 _MAX_SELECTED_EDUCATION = 2
 _MAX_SELECTED_LANGUAGES = 3
 _MAX_SELECTED_CERTIFICATES = 3
+_CONTENT_TOKEN_STOPWORDS = {
+    "about",
+    "across",
+    "activities",
+    "and",
+    "at",
+    "before",
+    "between",
+    "built",
+    "configured",
+    "created",
+    "delivered",
+    "for",
+    "from",
+    "helped",
+    "improved",
+    "into",
+    "maintained",
+    "most",
+    "or",
+    "our",
+    "role",
+    "supported",
+    "tasks",
+    "that",
+    "the",
+    "their",
+    "this",
+    "through",
+    "using",
+    "with",
+    "work",
+}
+_MIN_GROUNDED_TOKEN_OVERLAP_RATIO = 0.35
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize(value: str | None) -> str:
@@ -75,6 +122,126 @@ def _collect_job_keywords(job_posting: JobPosting) -> list[str]:
             _append_unique(keywords, token)
 
     return keywords
+
+
+def _collect_job_reportable_keywords(job_posting: JobPosting) -> list[str]:
+    """Collect the canonical keyword set shown in the public draft/report contract."""
+    keywords: list[str] = []
+
+    for keyword in job_posting.keywords:
+        _append_unique(keywords, keyword)
+    for requirement in job_posting.requirements:
+        for keyword in requirement.extracted_keywords:
+            _append_unique(keywords, keyword)
+
+    return keywords
+
+
+def _extract_numeric_tokens(text: str | None) -> list[str]:
+    """Extract numeric tokens that should not be invented in generated text."""
+    if not text:
+        return []
+    return re.findall(r"\b\d+(?:[.,]\d+)?%?\b", text)
+
+
+def _extract_content_tokens(text: str | None) -> list[str]:
+    """Extract meaningful tokens for conservative grounding checks."""
+    tokens: list[str] = []
+
+    for token in _tokenize(text):
+        if token in _CONTENT_TOKEN_STOPWORDS:
+            continue
+        if len(token) < 4 and not any(symbol in token for symbol in "+.#-"):
+            continue
+        _append_unique(tokens, token)
+
+    return tokens
+
+
+def _text_contains_unsupported_known_term(
+    text: str,
+    source_texts: Iterable[str | None],
+    known_terms: Iterable[str | None],
+) -> bool:
+    """Check whether generated text mentions a known term that is absent from its source."""
+    normalized_text = _normalize(text)
+    normalized_source_blob = " ".join(_normalize(source_text) for source_text in source_texts if source_text)
+
+    for known_term in known_terms:
+        normalized_term = _normalize(known_term)
+        if len(normalized_term) < 3:
+            continue
+        if normalized_term in normalized_text and normalized_term not in normalized_source_blob:
+            return True
+
+    return False
+
+
+def _is_grounded_generated_text(
+    text: str | None,
+    *,
+    source_texts: Iterable[str | None],
+    known_terms: Iterable[str | None] = (),
+) -> bool:
+    """Conservatively validate that generated text stays close to grounded source text."""
+    stripped_text = text.strip() if text else ""
+    cleaned_source_texts = _collect_text_values(source_texts)
+
+    if not stripped_text or not cleaned_source_texts:
+        return False
+
+    normalized_source_blob = " ".join(_normalize(source_text) for source_text in cleaned_source_texts)
+    if any(number not in normalized_source_blob for number in _extract_numeric_tokens(stripped_text)):
+        return False
+
+    if _text_contains_unsupported_known_term(stripped_text, cleaned_source_texts, known_terms):
+        return False
+
+    generated_tokens = _extract_content_tokens(stripped_text)
+    if not generated_tokens:
+        return _normalize(stripped_text) in normalized_source_blob
+
+    source_tokens: list[str] = []
+    for source_text in cleaned_source_texts:
+        for token in _extract_content_tokens(source_text):
+            _append_unique(source_tokens, token)
+
+    if not source_tokens:
+        return _normalize(stripped_text) in normalized_source_blob
+
+    overlap_count = sum(1 for token in generated_tokens if token in source_tokens)
+    required_overlap = max(
+        1,
+        min(len(generated_tokens), int(len(generated_tokens) * _MIN_GROUNDED_TOKEN_OVERLAP_RATIO + 0.999)),
+    )
+    return overlap_count >= required_overlap
+
+
+def _filter_grounded_generated_items(
+    items: Iterable[str | None],
+    *,
+    source_texts: Iterable[str | None],
+    known_terms: Iterable[str | None] = (),
+    limit: int,
+) -> list[str]:
+    """Keep only generated strings that pass conservative grounding checks."""
+    grounded_items: list[str] = []
+
+    for item in items:
+        stripped_item = item.strip() if item else ""
+        if not stripped_item:
+            continue
+        if not _is_grounded_generated_text(
+            stripped_item,
+            source_texts=source_texts,
+            known_terms=known_terms,
+        ):
+            continue
+        _append_unique(grounded_items, stripped_item)
+        if len(grounded_items) >= limit:
+            break
+
+    return grounded_items
 
 
 def _build_requirement_lookup(job_posting: JobPosting) -> dict[str, Requirement]:
@@ -438,20 +605,29 @@ def _select_languages(candidate_profile: CandidateProfile) -> list[str]:
     ]
 
 
+def _format_certificate_entry(entry: dict[str, str | None]) -> str:
+    """Format one certificate entry into a readable single-line CV item."""
+    details = [entry["certificate_name"]]
+    if entry["issuer"]:
+        details.append(entry["issuer"])
+    if entry["issue_date"]:
+        details.append(entry["issue_date"])
+    return " - ".join(details)
+
+
 def _select_certificates(candidate_profile: CandidateProfile) -> list[str]:
     """Select a compact certificate section."""
     selected_entries = candidate_profile.certificate_entries[:_MAX_SELECTED_CERTIFICATES]
-    formatted_entries: list[str] = []
-
-    for entry in selected_entries:
-        details = [entry.certificate_name]
-        if entry.issuer:
-            details.append(entry.issuer)
-        if entry.issue_date:
-            details.append(entry.issue_date)
-        formatted_entries.append(" - ".join(details))
-
-    return formatted_entries
+    return [
+        _format_certificate_entry(
+            {
+                "certificate_name": entry.certificate_name,
+                "issuer": entry.issuer,
+                "issue_date": entry.issue_date,
+            }
+        )
+        for entry in selected_entries
+    ]
 
 
 def _build_professional_summary(
@@ -699,22 +875,219 @@ def _build_warnings(match_result: MatchResult, resume_draft: ResumeDraft) -> lis
     return warnings
 
 
-def generate_resume_artifacts(
+def _build_allowed_value_lookup(values: Iterable[str | None]) -> dict[str, str]:
+    """Create a normalized lookup used to filter AI output to known allowed values."""
+    lookup: dict[str, str] = {}
+
+    for value in values:
+        stripped_value = value.strip() if value else ""
+        normalized_value = _normalize(stripped_value)
+        if stripped_value and normalized_value not in lookup:
+            lookup[normalized_value] = stripped_value
+
+    return lookup
+
+
+def _filter_allowed_values(
+    values: Iterable[str | None],
+    allowed_lookup: dict[str, str],
+    *,
+    limit: int,
+) -> list[str]:
+    """Keep only values that match an allowed canonical lookup while preserving order."""
+    filtered_values: list[str] = []
+
+    for value in values:
+        canonical_value = allowed_lookup.get(_normalize(value))
+        if not canonical_value:
+            continue
+        _append_unique(filtered_values, canonical_value)
+        if len(filtered_values) >= limit:
+            break
+
+    return filtered_values
+
+
+def _clean_string_list(values: Iterable[str | None], *, limit: int | None = None) -> list[str]:
+    """Trim, deduplicate and optionally cap a list of human-readable strings."""
+    cleaned_values: list[str] = []
+
+    for value in values:
+        _append_unique(cleaned_values, value)
+        if limit is not None and len(cleaned_values) >= limit:
+            break
+
+    return cleaned_values
+
+
+def _list_all_education_entries(candidate_profile: CandidateProfile) -> list[str]:
+    """Format all education entries for strict selection filtering."""
+    return [
+        _format_education_entry(
+            {
+                "degree": entry.degree,
+                "field_of_study": entry.field_of_study,
+                "institution_name": entry.institution_name,
+                "start_date": entry.start_date,
+                "end_date": entry.end_date,
+                "is_current": entry.is_current,
+            }
+        )
+        for entry in candidate_profile.education_entries
+    ]
+
+
+def _list_all_language_entries(candidate_profile: CandidateProfile) -> list[str]:
+    """Format all language entries for strict selection filtering."""
+    return [
+        f"{entry.language_name} - {entry.proficiency_level}"
+        for entry in candidate_profile.language_entries
+    ]
+
+
+def _list_all_certificate_entries(candidate_profile: CandidateProfile) -> list[str]:
+    """Format all certificate entries for strict selection filtering."""
+    return [
+        _format_certificate_entry(
+            {
+                "certificate_name": entry.certificate_name,
+                "issuer": entry.issuer,
+                "issue_date": entry.issue_date,
+            }
+        )
+        for entry in candidate_profile.certificate_entries
+    ]
+
+
+def _build_candidate_skill_lookup(candidate_profile: CandidateProfile) -> dict[str, str]:
+    """Create the canonical set of skills and technologies the AI is allowed to use."""
+    lookup: dict[str, str] = {}
+
+    def register(value: str | None, canonical_value: str | None = None) -> None:
+        stripped_value = value.strip() if value else ""
+        normalized_value = _normalize(stripped_value)
+        canonical = canonical_value.strip() if canonical_value else stripped_value
+        if stripped_value and normalized_value not in lookup:
+            lookup[normalized_value] = canonical
+
+    for skill_entry in candidate_profile.skill_entries:
+        register(skill_entry.name, skill_entry.name)
+        for alias in skill_entry.aliases:
+            register(alias, skill_entry.name)
+
+    for experience_entry in candidate_profile.experience_entries:
+        for technology in experience_entry.technologies_used:
+            register(technology)
+
+    for project_entry in candidate_profile.project_entries:
+        for technology in project_entry.technologies_used:
+            register(technology)
+
+    return lookup
+
+
+def _build_job_keyword_lookup(job_posting: JobPosting) -> dict[str, str]:
+    """Create the canonical set of job keywords the AI is allowed to emphasize."""
+    return _build_allowed_value_lookup(_collect_job_reportable_keywords(job_posting))
+
+
+def _build_selection_meta_from_match(
+    match_result: MatchResult,
+    resume_draft: ResumeDraft,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Link selected experience and project IDs back to requirement IDs using MatchResult evidence."""
+    experience_selection_meta = {
+        experience_entry.source_experience_id: []
+        for experience_entry in resume_draft.selected_experience_entries
+    }
+    project_selection_meta = {
+        project_entry.source_project_id: []
+        for project_entry in resume_draft.selected_project_entries
+    }
+
+    for requirement_match in match_result.requirement_matches:
+        for experience_id in requirement_match.matched_experience_ids:
+            if experience_id in experience_selection_meta:
+                _append_unique(
+                    experience_selection_meta[experience_id],
+                    requirement_match.requirement_id,
+                )
+        for project_id in requirement_match.matched_project_ids:
+            if project_id in project_selection_meta:
+                _append_unique(
+                    project_selection_meta[project_id],
+                    requirement_match.requirement_id,
+                )
+
+    return experience_selection_meta, project_selection_meta
+
+
+def _build_change_report(
     candidate_profile: CandidateProfile,
     job_posting: JobPosting,
     match_result: MatchResult,
-) -> dict[str, ResumeDraft | ChangeReport]:
-    """Generate a truthful-first ResumeDraft and ChangeReport from saved inputs."""
+    resume_draft: ResumeDraft,
+    *,
+    extra_warnings: Iterable[str] = (),
+    extra_blocked_items: Iterable[str] = (),
+    extra_omitted_items: Iterable[str] = (),
+) -> ChangeReport:
+    """Build a readable ChangeReport for either AI-assisted or fallback draft generation."""
+    reportable_job_keywords = _collect_job_reportable_keywords(job_posting)
+    experience_selection_meta, project_selection_meta = _build_selection_meta_from_match(
+        match_result,
+        resume_draft,
+    )
+
+    added_elements, emphasized_elements = _build_used_elements(
+        candidate_profile,
+        resume_draft,
+        experience_selection_meta,
+        project_selection_meta,
+    )
+    omitted_elements, omission_reasons = _build_omissions(candidate_profile, resume_draft)
+    blocked_items = _build_blocked_items(match_result)
+    warnings = _build_warnings(match_result, resume_draft)
+
+    for item in extra_omitted_items:
+        _append_unique(omitted_elements, item)
+    for item in extra_blocked_items:
+        _append_unique(blocked_items, item)
+    for item in extra_warnings:
+        _append_unique(warnings, item)
+
+    return ChangeReport(
+        added_elements=added_elements,
+        emphasized_elements=emphasized_elements,
+        omitted_elements=omitted_elements,
+        omission_reasons=omission_reasons,
+        detected_keywords=reportable_job_keywords,
+        used_keywords=resume_draft.keyword_usage,
+        unused_keywords=[
+            keyword for keyword in reportable_job_keywords if keyword not in resume_draft.keyword_usage
+        ],
+        blocked_items=blocked_items,
+        warnings=warnings,
+    )
+
+
+def _build_rule_based_resume_draft(
+    candidate_profile: CandidateProfile,
+    job_posting: JobPosting,
+    match_result: MatchResult,
+) -> ResumeDraft:
+    """Build the existing deterministic ResumeDraft used as a safe fallback."""
     requirement_lookup = _build_requirement_lookup(job_posting)
     job_keywords = _collect_job_keywords(job_posting)
+    reportable_job_keywords = _collect_job_reportable_keywords(job_posting)
 
-    selected_experience_entries, experience_selection_meta = _build_resume_experience_entries(
+    selected_experience_entries, _ = _build_resume_experience_entries(
         candidate_profile,
         match_result,
         requirement_lookup,
         job_keywords,
     )
-    selected_project_entries, project_selection_meta = _build_resume_project_entries(
+    selected_project_entries, _ = _build_resume_project_entries(
         candidate_profile,
         match_result,
         requirement_lookup,
@@ -728,9 +1101,18 @@ def generate_resume_artifacts(
         requirement_lookup,
         job_keywords,
     )
+    keyword_usage = _build_keyword_usage(
+        reportable_job_keywords,
+        selected_skills,
+        selected_experience_entries,
+        selected_project_entries,
+    )
 
-    resume_draft = ResumeDraft(
+    return ResumeDraft(
         header=_build_resume_header(candidate_profile, job_posting),
+        target_job_title=job_posting.title,
+        target_company_name=job_posting.company_name,
+        fit_summary=match_result.final_summary,
         professional_summary=_build_professional_summary(
             candidate_profile,
             job_posting,
@@ -742,37 +1124,422 @@ def generate_resume_artifacts(
         selected_education_entries=_select_education(candidate_profile),
         selected_language_entries=_select_languages(candidate_profile),
         selected_certificate_entries=_select_certificates(candidate_profile),
-        keyword_usage=_build_keyword_usage(
+        selected_keywords=keyword_usage,
+        keyword_usage=keyword_usage,
+    )
+
+
+def _build_ai_assisted_resume_draft(
+    candidate_profile: CandidateProfile,
+    job_posting: JobPosting,
+    match_result: MatchResult,
+    ai_output: OpenAIResumeTailoringOutput,
+) -> tuple[ResumeDraft, dict[str, list[str]]]:
+    """Hydrate, validate and constrain the AI output into the public ResumeDraft contract."""
+    requirement_lookup = _build_requirement_lookup(job_posting)
+    job_keywords = _collect_job_keywords(job_posting)
+    reportable_job_keywords = _collect_job_reportable_keywords(job_posting)
+    job_keyword_lookup = _build_job_keyword_lookup(job_posting)
+    candidate_skill_lookup = _build_candidate_skill_lookup(candidate_profile)
+    candidate_known_terms = list(dict.fromkeys(candidate_skill_lookup.values()))
+    experience_lookup = {
+        experience_entry.id: experience_entry for experience_entry in candidate_profile.experience_entries
+    }
+    project_lookup = {
+        project_entry.id: project_entry for project_entry in candidate_profile.project_entries
+    }
+
+    ignored_unknown_references = False
+    filtered_unknown_skills = False
+    filtered_unknown_keywords = False
+    used_guardrail_bullet_fallback = False
+    used_guardrail_summary_fallback = False
+    used_guardrail_fit_summary_fallback = False
+
+    selected_experience_entries: list[ResumeExperienceEntry] = []
+    for selection in ai_output.selected_experience_entries[:_MAX_SELECTED_EXPERIENCES]:
+        source_entry = experience_lookup.get(selection.source_experience_id)
+        if source_entry is None:
+            ignored_unknown_references = True
+            continue
+
+        source_lines = [*source_entry.achievements, *source_entry.responsibilities]
+        source_highlights = _filter_allowed_values(
+            selection.source_highlights,
+            _build_allowed_value_lookup(source_lines),
+            limit=3,
+        )
+        grounding_texts = [
+            source_entry.position_title,
+            *source_entry.technologies_used,
+            *source_entry.keywords,
+            *source_lines,
+            *source_highlights,
+        ]
+
+        source_keyword_hits = _find_keyword_hits(
             job_keywords,
-            selected_skills,
+            [
+                source_entry.position_title,
+                *source_entry.technologies_used,
+                *source_entry.keywords,
+                *source_entry.responsibilities,
+                *source_entry.achievements,
+            ],
+        )
+        highlighted_keywords = _filter_allowed_values(
+            selection.highlighted_keywords,
+            _build_allowed_value_lookup(source_keyword_hits),
+            limit=6,
+        )
+        bullet_points = _filter_grounded_generated_items(
+            selection.tailored_bullets,
+            source_texts=grounding_texts,
+            known_terms=candidate_known_terms,
+            limit=4,
+        )
+        if not bullet_points or not source_highlights:
+            bullet_points = _select_top_bullets(
+                source_lines,
+                highlighted_keywords or source_keyword_hits or job_keywords,
+                fallback_limit=4,
+            )
+            source_highlights = source_highlights or _clean_string_list(bullet_points, limit=3)
+            used_guardrail_bullet_fallback = True
+
+        selected_experience_entries.append(
+            ResumeExperienceEntry(
+                source_experience_id=source_entry.id,
+                company_name=source_entry.company_name,
+                position_title=source_entry.position_title,
+                date_range=_format_date_range(
+                    source_entry.start_date,
+                    source_entry.end_date,
+                    source_entry.is_current,
+                ),
+                bullet_points=bullet_points,
+                highlighted_keywords=highlighted_keywords or source_keyword_hits[:6],
+                relevance_note=(selection.relevance_note or "").strip() or None,
+                source_highlights=source_highlights,
+            )
+        )
+
+    selected_project_entries: list[ResumeProjectEntry] = []
+    for selection in ai_output.selected_project_entries[:_MAX_SELECTED_PROJECTS]:
+        source_entry = project_lookup.get(selection.source_project_id)
+        if source_entry is None:
+            ignored_unknown_references = True
+            continue
+
+        source_lines = [*source_entry.outcomes, source_entry.description]
+        source_highlights = _filter_allowed_values(
+            selection.source_highlights,
+            _build_allowed_value_lookup(source_lines),
+            limit=3,
+        )
+        grounding_texts = [
+            source_entry.project_name,
+            source_entry.role,
+            *source_entry.technologies_used,
+            *source_entry.keywords,
+            *source_lines,
+            *source_highlights,
+        ]
+
+        source_keyword_hits = _find_keyword_hits(
+            job_keywords,
+            [
+                source_entry.project_name,
+                source_entry.role,
+                source_entry.description,
+                *source_entry.technologies_used,
+                *source_entry.keywords,
+                *source_entry.outcomes,
+            ],
+        )
+        highlighted_keywords = _filter_allowed_values(
+            selection.highlighted_keywords,
+            _build_allowed_value_lookup(source_keyword_hits),
+            limit=6,
+        )
+        bullet_points = _filter_grounded_generated_items(
+            selection.tailored_bullets,
+            source_texts=grounding_texts,
+            known_terms=candidate_known_terms,
+            limit=3,
+        )
+        if not bullet_points or not source_highlights:
+            bullet_points = _select_top_bullets(
+                [item for item in source_lines if item],
+                highlighted_keywords or source_keyword_hits or job_keywords,
+                fallback_limit=3,
+            )
+            source_highlights = source_highlights or _clean_string_list(bullet_points, limit=3)
+            used_guardrail_bullet_fallback = True
+
+        selected_project_entries.append(
+            ResumeProjectEntry(
+                source_project_id=source_entry.id,
+                project_name=source_entry.project_name,
+                role=source_entry.role,
+                bullet_points=bullet_points,
+                highlighted_keywords=highlighted_keywords or source_keyword_hits[:6],
+                relevance_note=(selection.relevance_note or "").strip() or None,
+                source_highlights=source_highlights,
+            )
+        )
+
+    selected_skills = _filter_allowed_values(
+        ai_output.selected_skills,
+        candidate_skill_lookup,
+        limit=_MAX_SELECTED_SKILLS,
+    )
+    if len(selected_skills) < len(_clean_string_list(ai_output.selected_skills)):
+        filtered_unknown_skills = True
+    if not selected_skills:
+        selected_skills = _build_selected_skills(
+            candidate_profile,
             selected_experience_entries,
             selected_project_entries,
-        ),
+            match_result,
+            requirement_lookup,
+            job_keywords,
+        )
+
+    selected_keywords = _filter_allowed_values(
+        ai_output.selected_keywords,
+        job_keyword_lookup,
+        limit=10,
+    )
+    if len(selected_keywords) < len(_clean_string_list(ai_output.selected_keywords)):
+        filtered_unknown_keywords = True
+
+    selected_education_entries = _filter_allowed_values(
+        ai_output.selected_education_entries,
+        _build_allowed_value_lookup(_list_all_education_entries(candidate_profile)),
+        limit=_MAX_SELECTED_EDUCATION,
+    )
+    selected_language_entries = _filter_allowed_values(
+        ai_output.selected_language_entries,
+        _build_allowed_value_lookup(_list_all_language_entries(candidate_profile)),
+        limit=_MAX_SELECTED_LANGUAGES,
+    )
+    selected_certificate_entries = _filter_allowed_values(
+        ai_output.selected_certificate_entries,
+        _build_allowed_value_lookup(_list_all_certificate_entries(candidate_profile)),
+        limit=_MAX_SELECTED_CERTIFICATES,
     )
 
-    added_elements, emphasized_elements = _build_used_elements(
+    if not selected_education_entries:
+        selected_education_entries = _select_education(candidate_profile)
+    if not selected_language_entries:
+        selected_language_entries = _select_languages(candidate_profile)
+    if not selected_certificate_entries:
+        selected_certificate_entries = _select_certificates(candidate_profile)
+
+    keyword_usage = _build_keyword_usage(
+        reportable_job_keywords,
+        selected_skills,
+        selected_experience_entries,
+        selected_project_entries,
+    )
+    if not selected_keywords:
+        selected_keywords = keyword_usage
+
+    fallback_professional_summary = _build_professional_summary(
         candidate_profile,
-        resume_draft,
-        experience_selection_meta,
-        project_selection_meta,
+        job_posting,
+        selected_skills,
     )
-    omitted_elements, omission_reasons = _build_omissions(candidate_profile, resume_draft)
-
-    change_report = ChangeReport(
-        added_elements=added_elements,
-        emphasized_elements=emphasized_elements,
-        omitted_elements=omitted_elements,
-        omission_reasons=omission_reasons,
-        detected_keywords=job_posting.keywords,
-        used_keywords=resume_draft.keyword_usage,
-        unused_keywords=[
-            keyword for keyword in job_posting.keywords if keyword not in resume_draft.keyword_usage
+    summary_grounding_texts = [
+        candidate_profile.professional_summary_base,
+        *candidate_profile.target_roles,
+        *selected_skills,
+        *[
+            highlight
+            for experience_entry in selected_experience_entries
+            for highlight in experience_entry.source_highlights
         ],
-        blocked_items=_build_blocked_items(match_result),
-        warnings=_build_warnings(match_result, resume_draft),
+        *[
+            bullet
+            for experience_entry in selected_experience_entries
+            for bullet in experience_entry.bullet_points
+        ],
+        *[
+            highlight
+            for project_entry in selected_project_entries
+            for highlight in project_entry.source_highlights
+        ],
+        *[
+            bullet
+            for project_entry in selected_project_entries
+            for bullet in project_entry.bullet_points
+        ],
+    ]
+    professional_summary = (ai_output.professional_summary or "").strip()
+    if professional_summary and not _is_grounded_generated_text(
+        professional_summary,
+        source_texts=summary_grounding_texts,
+        known_terms=[*candidate_known_terms, *reportable_job_keywords],
+    ):
+        professional_summary = ""
+        used_guardrail_summary_fallback = True
+    professional_summary = professional_summary or fallback_professional_summary
+
+    fit_summary = (ai_output.fit_summary or "").strip()
+    if fit_summary and not _is_grounded_generated_text(
+        fit_summary,
+        source_texts=[match_result.final_summary, *selected_keywords, *selected_skills],
+        known_terms=[*candidate_known_terms, *reportable_job_keywords],
+    ):
+        fit_summary = ""
+        used_guardrail_fit_summary_fallback = True
+    fit_summary = fit_summary or match_result.final_summary
+
+    if not selected_experience_entries and not selected_project_entries:
+        raise ResumeTailoringOpenAIError(
+            "OpenAI returned an empty or unusable resume draft. Falling back to deterministic resume generation.",
+            fallback_reason=ResumeFallbackReason.INVALID_AI_OUTPUT,
+        )
+
+    notes: dict[str, list[str]] = {
+        "warnings": _clean_string_list(ai_output.warnings, limit=8),
+        "truthfulness_notes": _clean_string_list(ai_output.truthfulness_notes, limit=8),
+        "omitted_or_deemphasized_items": _clean_string_list(
+            ai_output.omitted_or_deemphasized_items,
+            limit=12,
+        ),
+        "generation_notes": [],
+    }
+    if ignored_unknown_references:
+        notes["generation_notes"].append(
+            "Some AI-selected source references were ignored because they did not exist in the supplied profile.",
+        )
+    if filtered_unknown_skills:
+        notes["generation_notes"].append(
+            "Some AI-selected skills were dropped because they were not explicitly present in the candidate profile.",
+        )
+    if filtered_unknown_keywords:
+        notes["generation_notes"].append(
+            "Some AI-selected keywords were dropped because they were not explicitly present in the job posting.",
+        )
+    if used_guardrail_bullet_fallback:
+        notes["generation_notes"].append(
+            "Some tailored bullets were replaced with source-grounded fallback content because explicit provenance was incomplete.",
+        )
+    if used_guardrail_summary_fallback:
+        notes["generation_notes"].append(
+            "The AI professional summary was replaced with a safer grounded summary because it overreached beyond the supplied evidence.",
+        )
+    if used_guardrail_fit_summary_fallback:
+        notes["generation_notes"].append(
+            "The AI fit summary was replaced with a safer grounded summary because it was not sufficiently supported by the available evidence.",
+        )
+
+    resume_draft = ResumeDraft(
+        header=_build_resume_header(candidate_profile, job_posting),
+        target_job_title=job_posting.title,
+        target_company_name=job_posting.company_name,
+        fit_summary=fit_summary,
+        professional_summary=professional_summary,
+        selected_skills=selected_skills,
+        selected_experience_entries=selected_experience_entries,
+        selected_project_entries=selected_project_entries,
+        selected_education_entries=selected_education_entries,
+        selected_language_entries=selected_language_entries,
+        selected_certificate_entries=selected_certificate_entries,
+        selected_keywords=selected_keywords,
+        keyword_usage=keyword_usage,
     )
+
+    return resume_draft, notes
+
+
+def generate_resume_artifacts(
+    candidate_profile: CandidateProfile,
+    job_posting: JobPosting,
+    match_result: MatchResult | None,
+) -> dict[str, object]:
+    """Generate a truthful-first ResumeDraft and ChangeReport from saved inputs."""
+    match_result_source = (
+        ResumeMatchResultSource.PROVIDED
+        if match_result is not None
+        else ResumeMatchResultSource.COMPUTED
+    )
+    effective_match_result = match_result or analyze_match_basic(
+        MatchAnalysisRequest(
+            candidate_profile=candidate_profile,
+            job_posting=job_posting,
+        )
+    )
+
+    generation_notes: list[str] = []
+    fallback_reason: ResumeFallbackReason | None = None
+
+    try:
+        ai_output = generate_resume_tailoring_with_openai(
+            candidate_profile,
+            job_posting,
+            effective_match_result,
+        )
+        resume_draft, ai_notes = _build_ai_assisted_resume_draft(
+            candidate_profile,
+            job_posting,
+            effective_match_result,
+            ai_output,
+        )
+        generation_mode = ResumeGenerationMode.OPENAI_STRUCTURED
+        for note in ai_notes["generation_notes"]:
+            _append_unique(generation_notes, note)
+        logger.info(
+            "Resume generation completed with structured OpenAI output.",
+            extra={
+                "generation_mode": generation_mode.value,
+                "match_result_source": match_result_source.value,
+                "selected_experience_entries": len(resume_draft.selected_experience_entries),
+                "selected_project_entries": len(resume_draft.selected_project_entries),
+            },
+        )
+        change_report = _build_change_report(
+            candidate_profile,
+            job_posting,
+            effective_match_result,
+            resume_draft,
+            extra_warnings=[*ai_notes["warnings"], *generation_notes],
+            extra_blocked_items=ai_notes["truthfulness_notes"],
+            extra_omitted_items=ai_notes["omitted_or_deemphasized_items"],
+        )
+    except ResumeTailoringOpenAIError as exc:
+        fallback_reason = exc.fallback_reason
+        _append_unique(generation_notes, exc.message)
+        resume_draft = _build_rule_based_resume_draft(
+            candidate_profile,
+            job_posting,
+            effective_match_result,
+        )
+        generation_mode = ResumeGenerationMode.RULE_BASED_FALLBACK
+        logger.warning(
+            "Resume generation fell back to deterministic mode.",
+            extra={
+                "generation_mode": generation_mode.value,
+                "match_result_source": match_result_source.value,
+                "fallback_reason": fallback_reason.value,
+                "details": exc.details,
+            },
+        )
+        change_report = _build_change_report(
+            candidate_profile,
+            job_posting,
+            effective_match_result,
+            resume_draft,
+            extra_warnings=generation_notes,
+        )
 
     return {
         "resume_draft": resume_draft,
         "change_report": change_report,
+        "generation_mode": generation_mode,
+        "match_result_source": match_result_source,
+        "fallback_reason": fallback_reason,
+        "generation_notes": generation_notes,
     }
