@@ -345,7 +345,14 @@ export async function saveMatchResult(matchResult, candidateProfileId, jobPostin
  * @param {object} candidateProfile CandidateProfile payload.
  * @param {object} jobPosting JobPosting payload.
  * @param {object} matchResult MatchResult payload.
- * @returns {Promise<{resume_draft: object, change_report: object}>} Generated draft artifacts.
+ * @returns {Promise<{
+ *   resume_draft: object,
+ *   change_report: object,
+ *   generation_mode: string,
+ *   match_result_source: string,
+ *   fallback_reason: string | null,
+ *   generation_notes: string[]
+ * }>} Generated draft artifacts together with generation metadata.
  */
 export async function generateResumeDraft(candidateProfile, jobPosting, matchResult) {
   const response = await fetch(buildApiUrl("/resume/generate"), {
@@ -359,5 +366,5 @@ export async function generateResumeDraft(candidateProfile, jobPosting, matchRes
       match_result: matchResult,
     }),
   });
-  return /** @type {Promise<{resume_draft: object, change_report: object}>} */ (readJson(response));
+  return /** @type {Promise<{resume_draft: object, change_report: object, generation_mode: string, match_result_source: string, fallback_reason: string | null, generation_notes: string[]}>} */ (readJson(response));
 }

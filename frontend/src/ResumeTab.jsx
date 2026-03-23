@@ -561,6 +561,9 @@ export default function ResumeTab() {
                 changeReport={resumeArtifacts.change_report}
                 matchResult={activeMatchResult}
                 matchSource={matchSource}
+                generationMode={resumeArtifacts.generation_mode}
+                fallbackReason={resumeArtifacts.fallback_reason}
+                generationNotes={resumeArtifacts.generation_notes}
               />
             ) : (
               <p className="placeholder">

@@ -48,6 +48,57 @@ function describeMatchSource(matchSource) {
 }
 
 /**
+ * Map the backend generation mode enum to a readable Polish label.
+ *
+ * @param {string | null | undefined} generationMode Backend generation mode value.
+ * @returns {string} User-facing label.
+ */
+function describeGenerationMode(generationMode) {
+  if (generationMode === "openai_structured") {
+    return "Generacja AI (ustrukturyzowana)";
+  }
+  if (generationMode === "rule_based_fallback") {
+    return "Tryb zapasowy (regulowy)";
+  }
+  return "Brak danych";
+}
+
+/**
+ * Explain the current generation mode in one short sentence.
+ *
+ * @param {string | null | undefined} generationMode Backend generation mode value.
+ * @returns {string} Short helper text for the metadata card.
+ */
+function describeGenerationModeHint(generationMode) {
+  if (generationMode === "openai_structured") {
+    return "Draft zostal przygotowany z wykorzystaniem ustrukturyzowanej odpowiedzi AI.";
+  }
+  if (generationMode === "rule_based_fallback") {
+    return "Draft zostal przygotowany w bezpiecznym trybie zapasowym, bez finalnego wyniku AI.";
+  }
+  return "Brak dodatkowych informacji o trybie generacji.";
+}
+
+/**
+ * Map the fallback reason enum to a readable Polish label.
+ *
+ * @param {string | null | undefined} fallbackReason Backend fallback reason value.
+ * @returns {string} User-facing label.
+ */
+function describeFallbackReason(fallbackReason) {
+  if (fallbackReason === "missing_api_key") {
+    return "Brak klucza API OpenAI.";
+  }
+  if (fallbackReason === "openai_error") {
+    return "Wystapil blad po stronie integracji OpenAI.";
+  }
+  if (fallbackReason === "invalid_ai_output") {
+    return "AI zwrocilo nieprawidlowy lub nieuzywalny wynik.";
+  }
+  return "Brak zarejestrowanego powodu fallbacku.";
+}
+
+/**
  * Render a string list with a placeholder fallback.
  *
  * @param {string[]} items List of strings to render.
@@ -84,10 +135,25 @@ function splitRequirements(matchResult) {
 /**
  * Render the report explaining why the generated draft looks the way it does.
  *
- * @param {{changeReport: object, matchResult: object | null, matchSource: object | null}} props Component props.
+ * @param {{
+ *   changeReport: object,
+ *   matchResult: object | null,
+ *   matchSource: object | null,
+ *   generationMode?: string | null,
+ *   fallbackReason?: string | null,
+ *   generationNotes?: string[] | null,
+ * }} props Component props.
  * @returns {JSX.Element} Structured change report view.
  */
-export default function ChangeReportDetails({ changeReport, matchResult, matchSource }) {
+export default function ChangeReportDetails({
+  changeReport,
+  matchResult,
+  matchSource,
+  generationMode,
+  fallbackReason,
+  generationNotes,
+}) {
+  const generationMetadataNotes = Array.isArray(generationNotes) ? generationNotes : [];
   const addedElements = Array.isArray(changeReport?.added_elements) ? changeReport.added_elements : [];
   const emphasizedElements = Array.isArray(changeReport?.emphasized_elements) ? changeReport.emphasized_elements : [];
   const omittedElements = Array.isArray(changeReport?.omitted_elements) ? changeReport.omitted_elements : [];
@@ -96,7 +162,9 @@ export default function ChangeReportDetails({ changeReport, matchResult, matchSo
   const usedKeywords = Array.isArray(changeReport?.used_keywords) ? changeReport.used_keywords : [];
   const unusedKeywords = Array.isArray(changeReport?.unused_keywords) ? changeReport.unused_keywords : [];
   const blockedItems = Array.isArray(changeReport?.blocked_items) ? changeReport.blocked_items : [];
-  const warnings = Array.isArray(changeReport?.warnings) ? changeReport.warnings : [];
+  const warnings = Array.isArray(changeReport?.warnings)
+    ? changeReport.warnings.filter((item) => !generationMetadataNotes.includes(item))
+    : [];
   const { covered, missing } = splitRequirements(matchResult);
 
   return (
@@ -123,6 +191,28 @@ export default function ChangeReportDetails({ changeReport, matchResult, matchSo
           </span>
         </div>
       </div>
+
+      <section className="detail-section">
+        <h4>Metadane generacji</h4>
+        <div className="result-metric-card">
+          <span className="metric-label">Tryb generacji</span>
+          <strong className="metric-value compact-metric-value">{describeGenerationMode(generationMode)}</strong>
+          <p className="helper-text">{describeGenerationModeHint(generationMode)}</p>
+        </div>
+
+        {fallbackReason ? (
+          <div className="message info">
+            <strong>Uzyto trybu zapasowego.</strong> Powod: {describeFallbackReason(fallbackReason)}
+          </div>
+        ) : null}
+      </section>
+
+      {generationMetadataNotes.length > 0 ? (
+        <section className="detail-section">
+          <h4>Notatki generacji</h4>
+          {renderStringList(generationMetadataNotes, "Brak dodatkowych notatek o przebiegu generacji.")}
+        </section>
+      ) : null}
 
       <div className="result-columns">
         <section className="detail-section">
@@ -278,5 +368,3 @@ export default function ChangeReportDetails({ changeReport, matchResult, matchSo
     </div>
   );
 }
-
-

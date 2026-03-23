@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Literal
 from pydantic import BaseModel, Field
 
 
 class RequirementMatch(BaseModel):
     requirement_id: str = Field(..., description="ID wymagania z oferty")
-    match_status: str = Field(
+    match_status: Literal["matched", "partial", "missing", "not_verifiable"] = Field(
         ...,
-        description="Status dopasowania: matched, partial, missing"
+        description="Status dopasowania: matched, partial, missing, not_verifiable"
     )
     matched_experience_ids: List[str] = Field(
         default_factory=list,
@@ -28,7 +28,7 @@ class RequirementMatch(BaseModel):
     )
     explanation: str = Field(
         ...,
-        description="Opis, dlaczego wymaganie uznano za matched, partial albo missing"
+        description="Opis, dlaczego wymaganie uznano za matched, partial, missing albo not_verifiable"
     )
     missing_elements: List[str] = Field(
         default_factory=list,
