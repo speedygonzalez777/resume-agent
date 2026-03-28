@@ -17,7 +17,7 @@ Backend:
 - walidacja `JobPosting`
 - URL-first parser ofert `POST /job/parse-url`
 - lokalna persystencja SQLite dla `CandidateProfile`, `JobPosting` i `MatchResult`
-- matching keywordowy zwracajacy `MatchResult` z weighted score i prostymi gating rules
+- category-aware matching zwracajacy `MatchResult` z weighted score, `not_verifiable`, AI-assisted requirement-type classification i AI-assisted education upgrade path
 - stateless generator CV `POST /resume/generate`, ktory zwraca `ResumeDraft` i `ChangeReport`
 
 Frontend:
@@ -76,12 +76,16 @@ Opcjonalnie dla trudniejszych stron ofert:
 ## Wazne env vars
 
 Backend:
-- `OPENAI_API_KEY` - wymagany do AI parsera ofert
+- `OPENAI_API_KEY` - wymagany do AI parsera ofert, AI requirement-type classification, AI-assisted education matching i AI resume tailoring
 - `RESUME_AGENT_DB_URL` - opcjonalny override URL SQLite
 - `JOB_URL_BROWSER_FALLBACK_ENABLED` - wlacza lokalny fallback Playwright
 - `JOB_URL_BROWSER_FALLBACK_DOMAINS` - opcjonalna lista domen dla fallbacku
 - `JOB_URL_BROWSER_FALLBACK_TIMEOUT_SECONDS`
 - `JOB_URL_BROWSER_FALLBACK_WAIT_MS`
+- `OPENAI_REQUIREMENT_TYPE_MODEL` - opcjonalny override modelu dla AI requirement-type classifier
+- `OPENAI_REQUIREMENT_TYPE_TEMPERATURE` - opcjonalny sampling override dla wspieranych rodzin modeli
+- `OPENAI_REQUIREMENT_TYPE_TOP_P` - opcjonalny sampling override dla wspieranych rodzin modeli
+- `OPENAI_EDUCATION_MATCH_MODEL` - opcjonalny override modelu dla AI-assisted education matching
 
 Frontend:
 - `VITE_API_BASE_URL` - opcjonalny URL backendu, domyslnie `http://127.0.0.1:8000`
@@ -281,9 +285,29 @@ http://127.0.0.1:5173
 
 ## Obecny matching
 
-`POST /match/analyze` nadal bazuje na prostym keyword matcherze, ale scoring nie jest zwykla srednia.
+`POST /match/analyze` nie jest juz jednym prostym keyword flow. Obecny backend laczy deterministic matching z ostroznym wsparciem OpenAI, ale nadal zachowuje truthful-first i explainability.
 
-- `overall_score` jest liczony jako weighted score
+- matcher ma category-aware deterministic baseline
+- requirement najpierw trafia do requirement-type classifiera:
+  - najpierw probuje AI classify pojedynczy requirement
+  - jesli AI nie dziala albo zwroci zly wynik, matcher wraca do obecnej klasyfikacji heurystycznej
+- znormalizowane typy requirementow uzywane do routingu to:
+  - `technical_skill`
+  - `experience`
+  - `education`
+  - `language`
+  - `application_constraint`
+  - `soft_signal`
+  - `low_signal`
+- `application_constraint` obejmuje rzeczy typu availability, commitment duration, work authorization, age, relocation czy on-site availability
+- `application_constraint` nie jest traktowany jak zwykly technical gap i pozostaje neutralny dla glownego score, ale nierozwiazany `must_have` nadal moze obnizyc rekomendacje do `generate_with_caution`
+- `education` ma deterministic baseline oraz AI-assisted semantic upgrade path dla niejednoznacznych przypadkow
+- `match_status` moze byc teraz:
+  - `matched = 1.0`
+  - `partial = 0.5`
+  - `missing = 0.0`
+  - `not_verifiable = neutralne dla score`
+- `overall_score` nadal jest liczony jako weighted score
 - `importance` wplywa na wage wymagania:
   - `high = 1.0`
   - `medium = 0.7`
@@ -291,14 +315,11 @@ http://127.0.0.1:5173
 - `requirement_type` wplywa na mnoznik:
   - `must_have = 1.4`
   - `nice_to_have = 1.0`
-- `match_status` daje wartosc:
-  - `matched = 1.0`
-  - `partial = 0.5`
-  - `missing = 0.0`
 - obowiazuja tez proste gating rules:
   - brak `must_have` z `importance=high` blokuje `fit_classification=high`
   - co najmniej jedno brakujace `must_have` blokuje rekomendacje `generate`
   - co najmniej dwa brakujace `must_have` daja `do_not_recommend`
+  - `must_have` oznaczone jako `not_verifiable` lub `application_constraint` moga wymusic bardziej ostrozne `generate_with_caution`
 
 ## Wymagania zaleznosci backendu
 
