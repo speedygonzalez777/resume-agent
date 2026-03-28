@@ -5,13 +5,45 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models.match import MatchResult
+from app.services.openai_candidate_profile_understanding_service import (
+    CandidateProfileUnderstanding,
+)
+from app.services.openai_requirement_candidate_match_service import (
+    RequirementCandidateMatchOutput,
+)
 from app.services.openai_education_match_service import OpenAIEducationRequirementMatchOutput
+from app.services.openai_requirement_priority_service import OpenAIRequirementPriorityItem
 from app.services.openai_requirement_type_service import OpenAIRequirementTypeClassificationOutput
 
 
-def test_match_analyze_returns_match_result_structure() -> None:
+def _disable_requirement_prioritization(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.match_service.get_requirement_priority_lookup",
+        lambda *_args, **_kwargs: {},
+    )
+
+
+def _disable_candidate_profile_understanding(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.match_service.get_candidate_profile_understanding",
+        lambda *_args, **_kwargs: CandidateProfileUnderstanding(),
+    )
+
+
+def _disable_ai_requirement_candidate_matching(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.match_service.evaluate_requirement_candidate_block_with_openai",
+        lambda *_args, **_kwargs: RequirementCandidateMatchOutput(),
+    )
+
+
+def test_match_analyze_returns_match_result_structure(monkeypatch) -> None:
     payload_path = Path("data/match_analysis_test.json")
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _disable_requirement_prioritization(monkeypatch)
+    _disable_candidate_profile_understanding(monkeypatch)
+    _disable_ai_requirement_candidate_matching(monkeypatch)
 
     with TestClient(app) as client:
         response = client.post("/match/analyze", json=payload)
@@ -41,7 +73,7 @@ def test_match_analyze_returns_match_result_structure() -> None:
             assert requirement_match["explanation"]
 
 
-def test_match_analyze_returns_not_verifiable_for_formal_requirement() -> None:
+def test_match_analyze_returns_not_verifiable_for_formal_requirement(monkeypatch) -> None:
     payload_path = Path("data/match_analysis_test.json")
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     payload["job_posting"]["requirements"] = [
@@ -63,6 +95,10 @@ def test_match_analyze_returns_not_verifiable_for_formal_requirement() -> None:
         },
     ]
     payload["job_posting"]["keywords"] = ["PLC", "18 years", "age"]
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _disable_requirement_prioritization(monkeypatch)
+    _disable_candidate_profile_understanding(monkeypatch)
+    _disable_ai_requirement_candidate_matching(monkeypatch)
 
     with TestClient(app) as client:
         response = client.post("/match/analyze", json=payload)
@@ -96,6 +132,9 @@ def test_match_analyze_can_return_ai_assisted_education_match(monkeypatch) -> No
     payload["job_posting"]["keywords"] = ["Electrical Engineering"]
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    _disable_requirement_prioritization(monkeypatch)
+    _disable_candidate_profile_understanding(monkeypatch)
+    _disable_ai_requirement_candidate_matching(monkeypatch)
     monkeypatch.setattr(
         "app.services.match_service.evaluate_requirement_type_with_openai",
         lambda *args, **kwargs: OpenAIRequirementTypeClassificationOutput(
@@ -159,6 +198,8 @@ def test_match_analyze_can_use_ai_requirement_type_classifier_for_application_co
     payload["job_posting"]["keywords"] = ["PLC", "30h/week", "6 months"]
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    _disable_requirement_prioritization(monkeypatch)
+    _disable_candidate_profile_understanding(monkeypatch)
 
     def _classify(requirement, job_posting):
         if requirement.id == "req_availability":
@@ -188,3 +229,93 @@ def test_match_analyze_can_use_ai_requirement_type_classifier_for_application_co
     assert "application constraint" in requirement_matches["req_availability"].explanation
     assert parsed_result.overall_score == 1.0
     assert parsed_result.recommendation == "generate_with_caution"
+
+
+def test_match_analyze_uses_requirement_prioritization_for_ordering_and_summary(monkeypatch) -> None:
+    payload_path = Path("data/match_analysis_test.json")
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["job_posting"]["requirements"] = [
+        {
+            "id": "req_fast_paced",
+            "text": "Experience in a fast-paced environment",
+            "category": "soft_skill",
+            "requirement_type": "nice_to_have",
+            "importance": "low",
+            "extracted_keywords": ["fast-paced"],
+        },
+        {
+            "id": "req_plc",
+            "text": "Basic knowledge of PLC systems",
+            "category": "technology",
+            "requirement_type": "must_have",
+            "importance": "high",
+            "extracted_keywords": ["PLC"],
+        },
+        {
+            "id": "req_communication",
+            "text": "Strong communication skills",
+            "category": "soft_skill",
+            "requirement_type": "nice_to_have",
+            "importance": "medium",
+            "extracted_keywords": ["communication"],
+        },
+    ]
+    payload["job_posting"]["keywords"] = ["fast-paced", "PLC", "communication"]
+    payload["candidate_profile"]["soft_skill_entries"] = ["communication"]
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    _disable_candidate_profile_understanding(monkeypatch)
+    _disable_ai_requirement_candidate_matching(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.match_service.evaluate_requirement_type_with_openai",
+        lambda requirement, *_args, **_kwargs: OpenAIRequirementTypeClassificationOutput(
+            normalized_requirement_type=(
+                "technical_skill"
+                if requirement.id == "req_plc"
+                else "soft_signal"
+                if requirement.id == "req_communication"
+                else "low_signal"
+            ),
+            confidence="high",
+            reasoning_note="Classifier output stubbed for requirement-priority endpoint coverage.",
+        ),
+    )
+
+    monkeypatch.setattr(
+        "app.services.match_service.get_requirement_priority_lookup",
+        lambda *_args, **_kwargs: {
+            "req_plc": OpenAIRequirementPriorityItem(
+                requirement_id="req_plc",
+                priority_tier="core",
+                confidence="high",
+                reasoning_note="PLC defines the role's main technical bar.",
+            ),
+            "req_communication": OpenAIRequirementPriorityItem(
+                requirement_id="req_communication",
+                priority_tier="supporting",
+                confidence="medium",
+                reasoning_note="Communication matters, but it is secondary to the technical core.",
+            ),
+            "req_fast_paced": OpenAIRequirementPriorityItem(
+                requirement_id="req_fast_paced",
+                priority_tier="low_signal",
+                confidence="high",
+                reasoning_note="Fast-paced environment is weakly differentiating.",
+            ),
+        },
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/match/analyze", json=payload)
+
+    assert response.status_code == 200
+
+    parsed_result = MatchResult.model_validate(response.json())
+
+    assert [item.requirement_id for item in parsed_result.requirement_matches] == [
+        "req_plc",
+        "req_communication",
+        "req_fast_paced",
+    ]
+    assert "AI requirement prioritization identified 1 core, 1 supporting, and 1 low-signal requirements." in (
+        parsed_result.final_summary
+    )

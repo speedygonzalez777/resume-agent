@@ -81,6 +81,8 @@ def test_update_candidate_profile_persists_same_id(client: TestClient) -> None:
         },
         "professional_summary_base": "Zaktualizowane podsumowanie zawodowe.",
         "target_roles": ["Senior Python Developer"],
+        "soft_skill_entries": ["communication", "leadership"],
+        "interest_entries": ["artificial intelligence", "product design"],
     }
     normalized_updated_payload = CandidateProfile.model_validate(updated_payload).model_dump(mode="json")
 

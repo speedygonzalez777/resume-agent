@@ -9,15 +9,34 @@ import re
 from app.models.analysis import MatchAnalysisRequest
 from app.models.job import JobPosting, Requirement
 from app.models.match import MatchResult, RequirementMatch
+from app.services.display_keyword_utils import build_display_keywords
+from app.services.openai_candidate_profile_understanding_service import (
+    CandidateProfileUnderstanding,
+    CandidateSourceSignal,
+    get_candidate_profile_understanding,
+)
 from app.services.openai_education_match_service import (
     EducationRequirementMatchOpenAIError,
     OpenAIEducationRequirementMatchOutput,
     evaluate_education_requirement_with_openai,
 )
+from app.services.openai_requirement_candidate_match_service import (
+    RequirementCandidateMatchItem,
+    RequirementCandidateMatchOpenAIError,
+    build_candidate_match_source_catalog,
+    evaluate_requirement_candidate_block_with_openai,
+)
+from app.services.openai_requirement_priority_service import (
+    OpenAIRequirementPriorityItem,
+    build_requirement_priority_sort_key,
+    count_requirement_priority_tiers,
+    get_requirement_priority_lookup,
+)
 from app.services.openai_requirement_type_service import (
     RequirementTypeClassificationOpenAIError,
     evaluate_requirement_type_with_openai,
 )
+from app.services.reportable_term_utils import build_reportable_offer_terms
 
 _IMPORTANCE_WEIGHTS = {
     "high": 1.0,
@@ -25,28 +44,62 @@ _IMPORTANCE_WEIGHTS = {
     "low": 0.4,
 }
 _REQUIREMENT_TYPE_MULTIPLIERS = {
-    "must_have": 1.4,
+    "must_have": 1.3,
     "nice_to_have": 1.0,
-}
-_MATCH_STATUS_SCORES = {
-    "matched": 1.0,
-    "partial": 0.5,
-    "missing": 0.0,
 }
 _CATEGORY_SCORE_MULTIPLIERS = {
     "technical_skill": 1.0,
     "experience": 1.0,
-    "education": 0.9,
-    "language": 0.8,
-    "domain": 0.7,
+    "education": 0.95,
+    "language": 0.9,
+    "domain": 0.85,
     "application_constraint": 0.0,
-    "soft_signal": 0.15,
-    "low_signal": 0.0,
+    "soft_signal": 0.6,
+    "low_signal": 0.45,
     "eligibility": 0.0,
-    "soft_skill": 0.15,
+    "soft_skill": 0.6,
+}
+_SCORING_BUCKET_BLEND_WEIGHTS = {
+    "core": 0.72,
+    "supporting": 0.2,
+    "contextual": 0.08,
+}
+_SCORING_BUCKET_BASE_MULTIPLIERS = {
+    "core": 1.0,
+    "supporting": 0.45,
+    "contextual": 0.2,
+    "manual_confirmation": 0.0,
+}
+_MATCH_STATUS_SCORES_BY_BUCKET = {
+    "core": {
+        "matched": 1.0,
+        "partial": 0.72,
+        "missing": 0.0,
+    },
+    "supporting": {
+        "matched": 1.0,
+        "partial": 0.5,
+        "missing": 0.0,
+    },
+    "contextual": {
+        "matched": 1.0,
+        "partial": 0.35,
+        "missing": 0.0,
+    },
 }
 _HIGH_FIT_THRESHOLD = 0.75
-_MEDIUM_FIT_THRESHOLD = 0.4
+_MEDIUM_FIT_THRESHOLD = 0.45
+_MAX_KEYWORD_COVERAGE = 8
+_AI_REQUIREMENT_MATCH_BLOCK_SIZE = 6
+_AI_SEMANTIC_ELIGIBLE_GROUPS = {
+    "technical_skill",
+    "experience",
+    "education",
+    "language",
+    "domain",
+    "soft_signal",
+}
+_MANUAL_CONFIRMATION_GROUPS = {"application_constraint", "eligibility"}
 
 _TOKEN_RE = re.compile(r"[\w\+#]+", flags=re.UNICODE)
 _YEARS_RE = re.compile(r"(\d+(?:[\.,]\d+)?)\s*\+?\s*(?:years?|yrs?)", flags=re.IGNORECASE)
@@ -84,6 +137,25 @@ _KNOWN_LANGUAGE_NAMES = {
     "danish",
     "finnish",
     "czech",
+}
+_LANGUAGE_DESCRIPTOR_ALIASES = {
+    "professional written": "professional_written",
+    "professional spoken": "professional_spoken",
+    "business working": "business_working",
+}
+_GENERIC_PROFILE_SIGNAL_TOKENS = {
+    "technology",
+    "technologies",
+    "engineering",
+    "engineer",
+    "work",
+    "project",
+    "projects",
+    "experience",
+    "experiences",
+    "skill",
+    "skills",
+    "knowledge",
 }
 _EXPERIENCE_NOISE_KEYWORDS = {
     "experience",
@@ -236,6 +308,48 @@ class MatchEvidenceContext:
     candidate_texts: list[str]
     skill_years_index: dict[str, float]
     language_levels: dict[str, str]
+    language_descriptor_index: dict[str, set[str]]
+    candidate_profile_understanding: CandidateProfileUnderstanding
+
+
+@dataclass(slots=True)
+class RequirementEvaluationRecord:
+    """Internal requirement evaluation row used for explainability ordering."""
+
+    original_index: int
+    requirement: Requirement
+    requirement_group: str
+    requirement_match: RequirementMatch
+
+
+@dataclass(slots=True)
+class RequirementScoringProfile:
+    """Internal scoring profile for one evaluated requirement."""
+
+    bucket: str
+    weight: float
+    status_score: float | None
+    priority_tier: str | None
+
+
+@dataclass(slots=True)
+class MatchScoreBreakdown:
+    """Compact deterministic score breakdown used for fit and recommendation."""
+
+    overall_score: float
+    core_coverage: float | None
+    supporting_coverage: float | None
+    contextual_coverage: float | None
+    core_requirement_count: int
+    supporting_requirement_count: int
+    contextual_requirement_count: int
+    manual_confirmation_requirement_count: int
+    core_missing_count: int
+    core_missing_must_have_count: int
+    missing_must_have_count: int
+    core_partial_count: int
+    critical_not_verifiable_count: int
+    pending_confirmation_count: int
 
 
 def _normalize(value: str | None) -> str:
@@ -341,9 +455,84 @@ def _register_certificate_evidence(
             )
 
 
-def _build_candidate_evidence_context(payload: MatchAnalysisRequest) -> MatchEvidenceContext:
+def _build_ai_profile_signal_evidence_text(source_signal: CandidateSourceSignal) -> str:
+    """Build a readable evidence text for a grounded AI-understood candidate signal."""
+
+    readable_signal_kind = source_signal.signal_kind.replace("_", " ")
+    return (
+        f"AI-understood {readable_signal_kind} '{source_signal.signal_label}' is grounded in "
+        f"{source_signal.source_type} '{source_signal.source_title}'."
+    )
+
+
+def _register_profile_understanding_source_signal(
+    evidence_index: dict[str, dict[str, list[str]]],
+    candidate_keywords: set[str],
+    source_signal: CandidateSourceSignal,
+) -> None:
+    """Register grounded hard-evidence profile signals into the deterministic evidence index."""
+
+    if source_signal.evidence_class != "hard_evidence":
+        return
+
+    experience_id = source_signal.source_id if source_signal.source_type == "experience" else None
+    project_id = source_signal.source_id if source_signal.source_type == "project" else None
+    skill_name = source_signal.signal_label if source_signal.source_type == "skill" else None
+    evidence_text = _build_ai_profile_signal_evidence_text(source_signal)
+
+    for value in [source_signal.signal_label, *source_signal.normalized_terms]:
+        if not value or not value.strip():
+            continue
+        _register_keyword_evidence(
+            evidence_index,
+            candidate_keywords,
+            value,
+            skill_name=skill_name,
+            experience_id=experience_id,
+            project_id=project_id,
+            evidence_text=evidence_text,
+        )
+        for token in _tokenize(value):
+            if (
+                len(token) <= 2
+                or token in _TOKEN_STOPWORDS
+                or token in _GENERIC_PROFILE_SIGNAL_TOKENS
+            ):
+                continue
+            _register_keyword_evidence(
+                evidence_index,
+                candidate_keywords,
+                token,
+                skill_name=skill_name,
+                experience_id=experience_id,
+                project_id=project_id,
+                evidence_text=evidence_text,
+            )
+
+
+def _expand_language_descriptors(descriptors: set[str]) -> set[str]:
+    """Expand language descriptors with conservative implied base descriptors."""
+
+    expanded_descriptors = set(descriptors)
+    if "professional_written" in expanded_descriptors:
+        expanded_descriptors.add("written")
+    if "professional_spoken" in expanded_descriptors:
+        expanded_descriptors.add("spoken")
+    if "fluent" in expanded_descriptors:
+        expanded_descriptors.update({"written", "spoken"})
+    if "business_working" in expanded_descriptors:
+        expanded_descriptors.add("spoken")
+    return expanded_descriptors
+
+
+def _build_candidate_evidence_context(
+    payload: MatchAnalysisRequest,
+    *,
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
+) -> MatchEvidenceContext:
     """Build reusable candidate evidence for category-aware requirement evaluators."""
     candidate = payload.candidate_profile
+    profile_understanding = candidate_profile_understanding or CandidateProfileUnderstanding()
     experience_ids = {experience.id for experience in candidate.experience_entries}
     project_ids = {project.id for project in candidate.project_entries}
 
@@ -351,6 +540,7 @@ def _build_candidate_evidence_context(payload: MatchAnalysisRequest) -> MatchEvi
     evidence_index: dict[str, dict[str, list[str]]] = {}
     skill_years_index: dict[str, float] = {}
     language_levels: dict[str, str] = {}
+    language_descriptor_index: dict[str, set[str]] = {}
 
     for skill in candidate.skill_entries:
         skill_evidence_text = f"Skill '{skill.name}' is listed in the candidate profile."
@@ -470,10 +660,65 @@ def _build_candidate_evidence_context(payload: MatchAnalysisRequest) -> MatchEvi
             notes=certificate.notes,
         )
 
+    for source_signal in profile_understanding.source_signals:
+        _register_profile_understanding_source_signal(
+            evidence_index,
+            candidate_keywords,
+            source_signal,
+        )
+
+    for language_normalization in profile_understanding.language_normalizations:
+        normalized_language_name = _normalize(language_normalization.language_name)
+        if not normalized_language_name:
+            continue
+
+        if language_normalization.normalized_cefr:
+            language_levels[normalized_language_name] = language_normalization.normalized_cefr.upper()
+
+        expanded_descriptors = _expand_language_descriptors(
+            set(language_normalization.semantic_descriptors)
+        )
+        if expanded_descriptors:
+            descriptor_bucket = language_descriptor_index.setdefault(normalized_language_name, set())
+            descriptor_bucket.update(expanded_descriptors)
+
+    profile_understanding_texts = _collect_text_values(
+        [
+            *[
+                value
+                for signal in profile_understanding.profile_signals
+                for value in [signal.signal_label, *signal.normalized_terms]
+            ],
+            *[
+                value
+                for alignment in profile_understanding.thematic_alignments
+                for value in [alignment.theme_label, *alignment.normalized_terms]
+            ],
+            *[
+                value
+                for signal in profile_understanding.source_signals
+                if signal.evidence_class == "declared_signal"
+                for value in [signal.signal_label, *signal.normalized_terms]
+            ],
+            *[
+                value
+                for normalization in profile_understanding.language_normalizations
+                for value in [
+                    normalization.language_name,
+                    normalization.source_level,
+                    normalization.normalized_cefr.upper() if normalization.normalized_cefr else None,
+                    *normalization.semantic_descriptors,
+                ]
+            ],
+        ]
+    )
+
     candidate_texts = _collect_text_values(
         [
             candidate.professional_summary_base,
             *candidate.target_roles,
+            *candidate.soft_skill_entries,
+            *candidate.interest_entries,
             *[
                 value
                 for experience in candidate.experience_entries
@@ -522,6 +767,7 @@ def _build_candidate_evidence_context(payload: MatchAnalysisRequest) -> MatchEvi
                 for language in candidate.language_entries
                 for value in [language.language_name, language.proficiency_level]
             ],
+            *profile_understanding_texts,
         ]
     )
 
@@ -532,6 +778,8 @@ def _build_candidate_evidence_context(payload: MatchAnalysisRequest) -> MatchEvi
         candidate_texts=candidate_texts,
         skill_years_index=skill_years_index,
         language_levels=language_levels,
+        language_descriptor_index=language_descriptor_index,
+        candidate_profile_understanding=profile_understanding,
     )
 
 
@@ -1004,6 +1252,31 @@ def _extract_required_language_level(requirement: Requirement) -> tuple[str | No
     return None, None
 
 
+def _extract_required_language_descriptors(requirement: Requirement) -> list[str]:
+    """Extract requested semantic language descriptors like fluent, written and spoken."""
+
+    text = _requirement_text_blob(requirement)
+    descriptors: list[str] = []
+
+    for phrase, descriptor in _LANGUAGE_DESCRIPTOR_ALIASES.items():
+        if phrase in text:
+            _append_unique(descriptors, descriptor)
+
+    for descriptor in (
+        "fluent",
+        "written",
+        "spoken",
+        "professional_written",
+        "professional_spoken",
+        "business_working",
+        "conversational",
+    ):
+        if descriptor in text:
+            _append_unique(descriptors, descriptor)
+
+    return descriptors
+
+
 def _evaluate_language_requirement(
     requirement: Requirement,
     context: MatchEvidenceContext,
@@ -1045,8 +1318,57 @@ def _evaluate_language_requirement(
         )
 
     required_level_label, required_level_score = _extract_required_language_level(requirement)
+    required_descriptors = _extract_required_language_descriptors(requirement)
     candidate_level_score = _LANGUAGE_SCORE_BY_LEVEL.get(_normalize(candidate_level))
     evidence_text = f"Language '{language_name}' is listed with level '{candidate_level}'."
+    candidate_descriptors = context.language_descriptor_index.get(normalized_language_name, set())
+
+    if required_descriptors and candidate_descriptors:
+        matched_descriptors = [
+            descriptor for descriptor in required_descriptors if descriptor in candidate_descriptors
+        ]
+        descriptor_summary = ", ".join(required_descriptors)
+        if len(matched_descriptors) == len(required_descriptors):
+            explanation = (
+                f"Matched language requirement '{requirement.text}' using normalized language evidence "
+                f"for '{language_name}' with descriptors: {descriptor_summary}."
+            )
+            return _build_requirement_match(
+                requirement,
+                match_status="matched",
+                explanation=explanation,
+                evidence_texts=[
+                    evidence_text,
+                    (
+                        f"AI-normalized language descriptors for '{language_name}' include: "
+                        f"{', '.join(sorted(candidate_descriptors))}."
+                    ),
+                ],
+            )
+
+        if matched_descriptors:
+            explanation = (
+                f"Partially matched language requirement '{requirement.text}' using normalized language "
+                f"evidence for '{language_name}'. Matched descriptors: {', '.join(matched_descriptors)}; "
+                f"missing descriptors: {', '.join(descriptor for descriptor in required_descriptors if descriptor not in matched_descriptors)}."
+            )
+            return _build_requirement_match(
+                requirement,
+                match_status="partial",
+                explanation=explanation,
+                evidence_texts=[
+                    evidence_text,
+                    (
+                        f"AI-normalized language descriptors for '{language_name}' include: "
+                        f"{', '.join(sorted(candidate_descriptors))}."
+                    ),
+                ],
+                missing_elements=[
+                    f"{language_name} with {descriptor}"
+                    for descriptor in required_descriptors
+                    if descriptor not in matched_descriptors
+                ],
+            )
 
     if required_level_score is None or candidate_level_score is None:
         explanation = (
@@ -1588,6 +1910,329 @@ def _evaluate_requirement(
     return group_name, _evaluate_low_signal_requirement(requirement, context)
 
 
+def _should_attempt_ai_requirement_candidate_match(
+    record: RequirementEvaluationRecord,
+) -> bool:
+    """Return whether one requirement is eligible for the semantic AI upgrade layer."""
+
+    return (
+        record.requirement_group in _AI_SEMANTIC_ELIGIBLE_GROUPS
+        and record.requirement_match.match_status in {"partial", "missing", "not_verifiable"}
+    )
+
+
+def _chunk_requirement_records(
+    requirement_records: list[RequirementEvaluationRecord],
+    *,
+    chunk_size: int,
+) -> list[list[RequirementEvaluationRecord]]:
+    """Split an ordered requirement list into stable small blocks."""
+
+    if chunk_size <= 0:
+        return [list(requirement_records)] if requirement_records else []
+
+    return [
+        requirement_records[index:index + chunk_size]
+        for index in range(0, len(requirement_records), chunk_size)
+    ]
+
+
+def _build_ai_semantic_evidence_texts(
+    ai_item: RequirementCandidateMatchItem,
+    candidate_source_lookup: dict[tuple[str, str], dict[str, str]],
+) -> list[str]:
+    """Turn grounded AI refs into readable evidence texts for the public match result."""
+
+    evidence_texts: list[str] = []
+
+    for evidence_ref in ai_item.evidence_refs:
+        source_meta = candidate_source_lookup.get((evidence_ref.source_type, evidence_ref.source_id))
+        if source_meta is None:
+            continue
+        _append_unique(
+            evidence_texts,
+            (
+                f"AI-grounded evidence '{evidence_ref.supporting_snippet}' came from "
+                f"{evidence_ref.source_type} '{source_meta['source_title']}'."
+            ),
+        )
+
+    return evidence_texts
+
+
+def _build_match_fields_from_ai_evidence_refs(
+    ai_item: RequirementCandidateMatchItem,
+    candidate_source_lookup: dict[tuple[str, str], dict[str, str]],
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Map grounded AI evidence refs back into RequirementMatch support fields."""
+
+    matched_skill_names: list[str] = []
+    matched_experience_ids: list[str] = []
+    matched_project_ids: list[str] = []
+    evidence_texts = _build_ai_semantic_evidence_texts(ai_item, candidate_source_lookup)
+
+    for evidence_ref in ai_item.evidence_refs:
+        if evidence_ref.source_type == "skill":
+            source_meta = candidate_source_lookup.get((evidence_ref.source_type, evidence_ref.source_id))
+            if source_meta is not None:
+                _append_unique(matched_skill_names, source_meta["source_title"])
+        elif evidence_ref.source_type == "experience":
+            _append_unique(matched_experience_ids, evidence_ref.source_id)
+        elif evidence_ref.source_type == "project":
+            _append_unique(matched_project_ids, evidence_ref.source_id)
+
+    return matched_skill_names, matched_experience_ids, matched_project_ids, evidence_texts
+
+
+def _missing_elements_include_year_threshold(missing_elements: list[str]) -> bool:
+    """Return whether the current missing-elements list still reflects a years threshold gap."""
+
+    return any("years of documented experience" in _normalize(item) for item in missing_elements)
+
+
+def _merge_semantic_missing_elements(
+    deterministic_match: RequirementMatch,
+    ai_item: RequirementCandidateMatchItem,
+    *,
+    final_status: str,
+    additional_missing_elements: list[str] | None = None,
+) -> list[str]:
+    """Merge missing elements conservatively so hard gaps are not erased by semantics."""
+
+    if final_status == "matched":
+        return []
+
+    missing_elements: list[str] = []
+    _extend_unique(missing_elements, deterministic_match.missing_elements)
+    _extend_unique(missing_elements, ai_item.missing_elements)
+    _extend_unique(missing_elements, additional_missing_elements or [])
+    return missing_elements
+
+
+def _build_requirement_match_from_ai_semantic_item(
+    requirement: Requirement,
+    deterministic_match: RequirementMatch,
+    ai_item: RequirementCandidateMatchItem,
+    *,
+    final_status: str,
+    candidate_source_lookup: dict[tuple[str, str], dict[str, str]],
+    additional_missing_elements: list[str] | None = None,
+) -> RequirementMatch:
+    """Map a validated semantic AI decision back into the public RequirementMatch shape."""
+
+    (
+        matched_skill_names,
+        matched_experience_ids,
+        matched_project_ids,
+        ai_evidence_texts,
+    ) = _build_match_fields_from_ai_evidence_refs(ai_item, candidate_source_lookup)
+
+    merged_evidence_texts = list(deterministic_match.evidence_texts)
+    _extend_unique(merged_evidence_texts, ai_evidence_texts)
+
+    merged_skill_names = list(deterministic_match.matched_skill_names)
+    _extend_unique(merged_skill_names, matched_skill_names)
+
+    merged_experience_ids = list(deterministic_match.matched_experience_ids)
+    _extend_unique(merged_experience_ids, matched_experience_ids)
+
+    merged_project_ids = list(deterministic_match.matched_project_ids)
+    _extend_unique(merged_project_ids, matched_project_ids)
+
+    supporting_signal_note = (
+        f" Supporting signals: {', '.join(ai_item.supporting_signal_labels)}."
+        if ai_item.supporting_signal_labels
+        else ""
+    )
+    merged_missing_elements = _merge_semantic_missing_elements(
+        deterministic_match,
+        ai_item,
+        final_status=final_status,
+        additional_missing_elements=additional_missing_elements,
+    )
+
+    return _build_requirement_match(
+        requirement,
+        match_status=final_status,
+        explanation=(
+            f"AI-assisted semantic review: {ai_item.reasoning_note}"
+            f"{supporting_signal_note}"
+        ),
+        matched_skill_names=merged_skill_names,
+        matched_experience_ids=merged_experience_ids,
+        matched_project_ids=merged_project_ids,
+        evidence_texts=merged_evidence_texts,
+        missing_elements=merged_missing_elements,
+    )
+
+
+def _merge_ai_soft_signal_requirement_match(
+    requirement: Requirement,
+    deterministic_match: RequirementMatch,
+    ai_item: RequirementCandidateMatchItem,
+    *,
+    candidate_source_lookup: dict[tuple[str, str], dict[str, str]],
+) -> RequirementMatch:
+    """Merge semantic AI output for soft-signal requirements conservatively."""
+
+    if ai_item.grounding_strength == "weak":
+        return deterministic_match
+
+    if ai_item.suggested_status in {"matched", "partial"} and ai_item.evidence_basis in {
+        "hard_evidence",
+        "mixed",
+        "declared_only",
+        "thematic_only",
+    }:
+        final_status = "matched"
+        if ai_item.evidence_basis in {"declared_only", "thematic_only"} or ai_item.grounding_strength != "strong":
+            final_status = "partial"
+        return _build_requirement_match_from_ai_semantic_item(
+            requirement,
+            deterministic_match,
+            ai_item,
+            final_status=final_status,
+            candidate_source_lookup=candidate_source_lookup,
+        )
+
+    return deterministic_match
+
+
+def _merge_ai_requirement_candidate_match(
+    requirement: Requirement,
+    requirement_group: str,
+    deterministic_match: RequirementMatch,
+    ai_item: RequirementCandidateMatchItem,
+    *,
+    candidate_source_lookup: dict[tuple[str, str], dict[str, str]],
+) -> RequirementMatch:
+    """Conservatively merge semantic AI matching with the deterministic baseline."""
+
+    if requirement_group == "soft_signal":
+        return _merge_ai_soft_signal_requirement_match(
+            requirement,
+            deterministic_match,
+            ai_item,
+            candidate_source_lookup=candidate_source_lookup,
+        )
+
+    if ai_item.grounding_strength == "weak":
+        return deterministic_match
+
+    if ai_item.evidence_basis in {"declared_only", "thematic_only", "none"}:
+        return deterministic_match
+
+    final_status = deterministic_match.match_status
+    additional_missing_elements: list[str] = []
+    if ai_item.suggested_status == "matched" and ai_item.grounding_strength == "strong":
+        final_status = "matched"
+    elif ai_item.suggested_status == "partial" and ai_item.grounding_strength in {"strong", "moderate"}:
+        final_status = "partial"
+    else:
+        return deterministic_match
+
+    required_years = _extract_required_years(requirement) if requirement_group == "experience" else None
+    if requirement_group == "experience" and required_years is not None and final_status == "matched":
+        if deterministic_match.match_status != "matched":
+            final_status = "partial"
+            additional_missing_elements.append(f"{required_years:g}+ years of documented experience")
+        elif _missing_elements_include_year_threshold(deterministic_match.missing_elements):
+            final_status = "partial"
+            additional_missing_elements.append(f"{required_years:g}+ years of documented experience")
+
+    if final_status == deterministic_match.match_status and not ai_item.supporting_signal_labels:
+        return deterministic_match
+
+    return _build_requirement_match_from_ai_semantic_item(
+        requirement,
+        deterministic_match,
+        ai_item,
+        final_status=final_status,
+        candidate_source_lookup=candidate_source_lookup,
+        additional_missing_elements=additional_missing_elements,
+    )
+
+
+def _apply_ai_requirement_candidate_matching(
+    payload: MatchAnalysisRequest,
+    requirement_records: list[RequirementEvaluationRecord],
+    context: MatchEvidenceContext,
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> tuple[list[RequirementEvaluationRecord], int]:
+    """Apply the semantic AI upgrade layer on top of deterministic requirement matches."""
+
+    if not _has_configured_openai_api_key():
+        return requirement_records, 0
+
+    eligible_records = [
+        record
+        for record in _order_requirement_records(requirement_records, priority_lookup)
+        if _should_attempt_ai_requirement_candidate_match(record)
+    ]
+    if not eligible_records:
+        return requirement_records, 0
+
+    _, candidate_source_lookup = build_candidate_match_source_catalog(
+        payload.candidate_profile,
+    )
+    requirement_groups = {
+        record.requirement.id: record.requirement_group
+        for record in requirement_records
+    }
+    deterministic_match_lookup = {
+        record.requirement.id: record.requirement_match
+        for record in requirement_records
+    }
+    merged_lookup = dict(deterministic_match_lookup)
+    semantic_upgrade_count = 0
+
+    for requirement_block in _chunk_requirement_records(
+        eligible_records,
+        chunk_size=_AI_REQUIREMENT_MATCH_BLOCK_SIZE,
+    ):
+        try:
+            ai_output = evaluate_requirement_candidate_block_with_openai(
+                payload,
+                target_requirements=[record.requirement for record in requirement_block],
+                requirement_groups=requirement_groups,
+                deterministic_match_lookup=merged_lookup,
+                requirement_priority_lookup=priority_lookup,
+                candidate_profile_understanding=context.candidate_profile_understanding,
+            )
+        except RequirementCandidateMatchOpenAIError:
+            continue
+
+        ai_lookup = {item.requirement_id: item for item in ai_output.items}
+        for record in requirement_block:
+            ai_item = ai_lookup.get(record.requirement.id)
+            if ai_item is None:
+                continue
+
+            merged_match = _merge_ai_requirement_candidate_match(
+                record.requirement,
+                record.requirement_group,
+                merged_lookup[record.requirement.id],
+                ai_item,
+                candidate_source_lookup=candidate_source_lookup,
+            )
+            if merged_match.model_dump(mode="json") != merged_lookup[record.requirement.id].model_dump(mode="json"):
+                semantic_upgrade_count += 1
+            merged_lookup[record.requirement.id] = merged_match
+
+    return (
+        [
+            RequirementEvaluationRecord(
+                original_index=record.original_index,
+                requirement=record.requirement,
+                requirement_group=record.requirement_group,
+                requirement_match=merged_lookup[record.requirement.id],
+            )
+            for record in requirement_records
+        ],
+        semantic_upgrade_count,
+    )
+
+
 def _get_importance_weight(importance: str) -> float:
     """Return the score weight for requirement importance."""
     normalized_importance = _normalize(importance)
@@ -1603,12 +2248,44 @@ def _get_requirement_type_multiplier(requirement_type: str) -> float:
     )
 
 
-def _get_match_status_score(match_status: str) -> float | None:
-    """Return the numeric score for a requirement match status or None when it is neutral."""
+def _is_must_have(requirement: Requirement) -> bool:
+    """Return whether one requirement is explicitly marked as must-have."""
+    return _normalize(requirement.requirement_type) == "must_have"
+
+
+def _get_requirement_priority_tier(
+    requirement: Requirement,
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> str | None:
+    """Return the AI priority tier for one requirement when available."""
+
+    priority_item = priority_lookup.get(requirement.id)
+    if priority_item is None:
+        return None
+    return priority_item.priority_tier
+
+
+def _get_scoring_bucket_base_multiplier(bucket: str) -> float:
+    """Return the base score weight for one scoring bucket."""
+
+    return _SCORING_BUCKET_BASE_MULTIPLIERS.get(
+        bucket,
+        _SCORING_BUCKET_BASE_MULTIPLIERS["contextual"],
+    )
+
+
+def _get_bucket_status_score(bucket: str, match_status: str) -> float | None:
+    """Return the bucket-aware numeric score for one requirement match status."""
+
     normalized_match_status = _normalize(match_status)
     if normalized_match_status == "not_verifiable":
         return None
-    return _MATCH_STATUS_SCORES.get(normalized_match_status, _MATCH_STATUS_SCORES["missing"])
+
+    bucket_scores = _MATCH_STATUS_SCORES_BY_BUCKET.get(
+        bucket,
+        _MATCH_STATUS_SCORES_BY_BUCKET["contextual"],
+    )
+    return bucket_scores.get(normalized_match_status, bucket_scores["missing"])
 
 
 def _get_category_score_multiplier(requirement_group: str) -> float:
@@ -1616,44 +2293,238 @@ def _get_category_score_multiplier(requirement_group: str) -> float:
     return _CATEGORY_SCORE_MULTIPLIERS.get(requirement_group, 1.0)
 
 
-def _calculate_requirement_weight(requirement: Requirement, requirement_group: str) -> float:
-    """Calculate the weighted-score importance of a single requirement."""
+def _determine_scoring_bucket(
+    requirement: Requirement,
+    requirement_group: str,
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> str:
+    """Map one evaluated requirement into a compact deterministic scoring bucket."""
+
+    if requirement_group in _MANUAL_CONFIRMATION_GROUPS:
+        return "manual_confirmation"
+
+    priority_tier = _get_requirement_priority_tier(requirement, priority_lookup)
+    if priority_tier == "core":
+        return "core"
+    if priority_tier == "supporting":
+        return "supporting"
+    if priority_tier == "low_signal":
+        return "contextual"
+
+    normalized_importance = _normalize(requirement.importance)
+    if requirement_group in {"technical_skill", "experience"}:
+        if _is_must_have(requirement) and normalized_importance == "high":
+            return "core"
+        if _is_must_have(requirement) or normalized_importance in {"high", "medium"}:
+            return "supporting"
+        return "contextual"
+
+    if requirement_group in {"education", "language", "domain"}:
+        if _is_must_have(requirement) and normalized_importance == "high":
+            return "core"
+        if _is_must_have(requirement) or normalized_importance in {"high", "medium"}:
+            return "supporting"
+        return "contextual"
+
+    return "contextual"
+
+
+def _calculate_requirement_weight(
+    requirement: Requirement,
+    requirement_group: str,
+    scoring_bucket: str,
+) -> float:
+    """Calculate the tier-aware importance of a single requirement for score coverage."""
     return (
         _get_importance_weight(requirement.importance)
         * _get_requirement_type_multiplier(requirement.requirement_type)
         * _get_category_score_multiplier(requirement_group)
+        * _get_scoring_bucket_base_multiplier(scoring_bucket)
     )
 
 
-def _calculate_weighted_score(
-    requirements: list[Requirement],
-    requirement_groups: list[str],
-    requirement_matches: list[RequirementMatch],
-) -> float:
-    """Calculate the weighted overall score across all score-bearing requirements."""
-    weighted_score_sum = 0.0
-    total_weight = 0.0
+def _calculate_bucket_coverage(
+    weighted_score_sum: float,
+    total_weight: float,
+) -> float | None:
+    """Return one normalized bucket coverage or None when the bucket has no score-bearing items."""
 
-    for requirement, requirement_group, requirement_match in zip(
-        requirements,
-        requirement_groups,
-        requirement_matches,
-    ):
-        requirement_weight = _calculate_requirement_weight(requirement, requirement_group)
-        match_status_score = _get_match_status_score(requirement_match.match_status)
-        if requirement_weight <= 0 or match_status_score is None:
-            continue
-        total_weight += requirement_weight
-        weighted_score_sum += requirement_weight * match_status_score
-
-    if total_weight == 0:
-        return 0.0
-
+    if total_weight <= 0:
+        return None
     return weighted_score_sum / total_weight
 
 
-def _calculate_fit_classification(overall_score: float) -> str:
-    """Classify the overall score using explicit high and medium thresholds."""
+def _calculate_overall_score_from_bucket_coverages(
+    core_coverage: float | None,
+    supporting_coverage: float | None,
+    contextual_coverage: float | None,
+) -> float:
+    """Blend tier-aware coverages into the final deterministic overall score."""
+
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    for bucket_name, coverage in (
+        ("core", core_coverage),
+        ("supporting", supporting_coverage),
+        ("contextual", contextual_coverage),
+    ):
+        if coverage is None:
+            continue
+        bucket_weight = _SCORING_BUCKET_BLEND_WEIGHTS[bucket_name]
+        total_weight += bucket_weight
+        weighted_sum += bucket_weight * coverage
+
+    if total_weight <= 0:
+        return 0.0
+
+    return weighted_sum / total_weight
+
+
+def _build_requirement_scoring_profile(
+    record: RequirementEvaluationRecord,
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> RequirementScoringProfile:
+    """Build the scoring profile for one evaluated requirement record."""
+
+    scoring_bucket = _determine_scoring_bucket(
+        record.requirement,
+        record.requirement_group,
+        priority_lookup,
+    )
+    return RequirementScoringProfile(
+        bucket=scoring_bucket,
+        weight=_calculate_requirement_weight(
+            record.requirement,
+            record.requirement_group,
+            scoring_bucket,
+        ),
+        status_score=_get_bucket_status_score(
+            scoring_bucket,
+            record.requirement_match.match_status,
+        ),
+        priority_tier=_get_requirement_priority_tier(record.requirement, priority_lookup),
+    )
+
+
+def _calculate_match_score_breakdown(
+    requirement_records: list[RequirementEvaluationRecord],
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> MatchScoreBreakdown:
+    """Calculate the deterministic score breakdown used for fit and recommendation."""
+
+    bucket_weight_sums = {
+        "core": 0.0,
+        "supporting": 0.0,
+        "contextual": 0.0,
+    }
+    bucket_score_sums = {
+        "core": 0.0,
+        "supporting": 0.0,
+        "contextual": 0.0,
+    }
+    bucket_requirement_counts = {
+        "core": 0,
+        "supporting": 0,
+        "contextual": 0,
+        "manual_confirmation": 0,
+    }
+    core_missing_count = 0
+    core_missing_must_have_count = 0
+    missing_must_have_count = 0
+    core_partial_count = 0
+    critical_not_verifiable_count = 0
+    pending_confirmation_count = 0
+
+    for record in requirement_records:
+        profile = _build_requirement_scoring_profile(record, priority_lookup)
+        requirement = record.requirement
+        requirement_match = record.requirement_match
+        bucket_requirement_counts[profile.bucket] += 1
+
+        if profile.bucket == "manual_confirmation":
+            if requirement_match.match_status != "matched":
+                pending_confirmation_count += 1
+            continue
+
+        if profile.bucket == "core":
+            if requirement_match.match_status == "missing":
+                core_missing_count += 1
+                if _is_must_have(requirement):
+                    core_missing_must_have_count += 1
+                    missing_must_have_count += 1
+            elif requirement_match.match_status == "partial":
+                core_partial_count += 1
+            elif requirement_match.match_status == "not_verifiable":
+                critical_not_verifiable_count += 1
+        else:
+            if requirement_match.match_status == "missing" and _is_must_have(requirement):
+                missing_must_have_count += 1
+            elif (
+                requirement_match.match_status == "not_verifiable"
+                and _is_must_have(requirement)
+                and record.requirement_group not in {"soft_signal", "low_signal"}
+            ):
+                critical_not_verifiable_count += 1
+
+        if profile.weight <= 0 or profile.status_score is None:
+            continue
+
+        bucket_weight_sums[profile.bucket] += profile.weight
+        bucket_score_sums[profile.bucket] += profile.weight * profile.status_score
+
+    core_coverage = _calculate_bucket_coverage(
+        bucket_score_sums["core"],
+        bucket_weight_sums["core"],
+    )
+    supporting_coverage = _calculate_bucket_coverage(
+        bucket_score_sums["supporting"],
+        bucket_weight_sums["supporting"],
+    )
+    contextual_coverage = _calculate_bucket_coverage(
+        bucket_score_sums["contextual"],
+        bucket_weight_sums["contextual"],
+    )
+
+    return MatchScoreBreakdown(
+        overall_score=_calculate_overall_score_from_bucket_coverages(
+            core_coverage,
+            supporting_coverage,
+            contextual_coverage,
+        ),
+        core_coverage=core_coverage,
+        supporting_coverage=supporting_coverage,
+        contextual_coverage=contextual_coverage,
+        core_requirement_count=bucket_requirement_counts["core"],
+        supporting_requirement_count=bucket_requirement_counts["supporting"],
+        contextual_requirement_count=bucket_requirement_counts["contextual"],
+        manual_confirmation_requirement_count=bucket_requirement_counts["manual_confirmation"],
+        core_missing_count=core_missing_count,
+        core_missing_must_have_count=core_missing_must_have_count,
+        missing_must_have_count=missing_must_have_count,
+        core_partial_count=core_partial_count,
+        critical_not_verifiable_count=critical_not_verifiable_count,
+        pending_confirmation_count=pending_confirmation_count,
+    )
+
+
+def _calculate_fit_classification(score_breakdown: MatchScoreBreakdown) -> str:
+    """Classify fit from the tier-aware overall score while respecting core coverage."""
+
+    overall_score = score_breakdown.overall_score
+    core_coverage = score_breakdown.core_coverage
+
+    if core_coverage is not None:
+        if (
+            overall_score >= _HIGH_FIT_THRESHOLD
+            and core_coverage >= 0.72
+            and score_breakdown.core_missing_must_have_count == 0
+        ):
+            return "high"
+        if overall_score >= _MEDIUM_FIT_THRESHOLD and core_coverage >= 0.4:
+            return "medium"
+        return "low"
+
     if overall_score >= _HIGH_FIT_THRESHOLD:
         return "high"
     if overall_score >= _MEDIUM_FIT_THRESHOLD:
@@ -1661,111 +2532,89 @@ def _calculate_fit_classification(overall_score: float) -> str:
     return "low"
 
 
-def _build_recommendation(fit_classification: str) -> str:
-    """Map fit classification to the base recommendation."""
-    recommendation_by_fit = {
-        "high": "generate",
-        "medium": "generate_with_caution",
-        "low": "do_not_recommend",
-    }
-    return recommendation_by_fit[fit_classification]
-
-
-def _count_missing_must_have_requirements(
-    requirements: list[Requirement],
-    requirement_matches: list[RequirementMatch],
-) -> int:
-    """Count must-have requirements that remain completely missing."""
-    return sum(
-        1
-        for requirement, requirement_match in zip(requirements, requirement_matches)
-        if _normalize(requirement.requirement_type) == "must_have"
-        and requirement_match.match_status == "missing"
-    )
-
-
-def _has_missing_high_importance_must_have(
-    requirements: list[Requirement],
-    requirement_matches: list[RequirementMatch],
-) -> bool:
-    """Check whether any critical must-have requirement is fully missing."""
-    return any(
-        _normalize(requirement.requirement_type) == "must_have"
-        and _normalize(requirement.importance) == "high"
-        and requirement_match.match_status == "missing"
-        for requirement, requirement_match in zip(requirements, requirement_matches)
-    )
-
-
-def _has_not_verifiable_must_have(
-    requirements: list[Requirement],
-    requirement_groups: list[str],
-    requirement_matches: list[RequirementMatch],
-) -> bool:
-    """Check whether any must-have requirement stayed unverifiable and should trigger caution."""
-    return any(
-        _normalize(requirement.requirement_type) == "must_have"
-        and requirement_match.match_status == "not_verifiable"
-        and requirement_group not in {"low_signal", "soft_signal"}
-        for requirement, requirement_group, requirement_match in zip(
-            requirements,
-            requirement_groups,
-            requirement_matches,
-        )
-    )
-
-
-def _apply_fit_classification_gating(
+def _build_recommendation(
     fit_classification: str,
-    requirements: list[Requirement],
-    requirement_matches: list[RequirementMatch],
+    score_breakdown: MatchScoreBreakdown,
 ) -> str:
-    """Apply simple gating rules that cap misleadingly optimistic fit labels."""
-    if (
-        fit_classification == "high"
-        and _has_missing_high_importance_must_have(requirements, requirement_matches)
-    ):
-        return "medium"
+    """Build the product recommendation from the tier-aware fit breakdown."""
 
-    return fit_classification
-
-
-def _apply_recommendation_gating(
-    recommendation: str,
-    requirements: list[Requirement],
-    requirement_groups: list[str],
-    requirement_matches: list[RequirementMatch],
-) -> str:
-    """Apply must-have gating so critical gaps cannot keep an optimistic recommendation."""
-    missing_must_have_count = _count_missing_must_have_requirements(
-        requirements,
-        requirement_matches,
-    )
-
-    if missing_must_have_count >= 2:
+    core_coverage = score_breakdown.core_coverage
+    if score_breakdown.missing_must_have_count >= 2:
         return "do_not_recommend"
-    if missing_must_have_count >= 1 and recommendation == "generate":
+    if core_coverage is not None and core_coverage < 0.35:
+        return "do_not_recommend"
+    if fit_classification == "low":
+        return "do_not_recommend"
+    if score_breakdown.missing_must_have_count >= 1:
         return "generate_with_caution"
-    if (
-        recommendation == "generate"
-        and _has_not_verifiable_must_have(requirements, requirement_groups, requirement_matches)
-    ):
+    if score_breakdown.critical_not_verifiable_count >= 1:
         return "generate_with_caution"
+    if score_breakdown.core_partial_count >= 2:
+        return "generate_with_caution"
+    if score_breakdown.pending_confirmation_count >= 1 and fit_classification == "high":
+        return "generate_with_caution"
+    if fit_classification == "high":
+        return "generate"
+    return "generate_with_caution"
 
-    return recommendation
+
+def _get_requirement_priority_label(
+    requirement: Requirement,
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> str | None:
+    """Return a short user-facing label for one requirement priority tier."""
+
+    priority_item = priority_lookup.get(requirement.id)
+    if priority_item is None:
+        return None
+
+    if priority_item.priority_tier == "core":
+        return "core signal"
+    if priority_item.priority_tier == "supporting":
+        return "supporting signal"
+    return "low-signal requirement"
+
+
+def _order_requirement_records(
+    requirement_records: list[RequirementEvaluationRecord],
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> list[RequirementEvaluationRecord]:
+    """Return requirement records in AI-prioritized order with stable fallback ordering."""
+
+    if not priority_lookup:
+        return list(requirement_records)
+
+    return sorted(
+        requirement_records,
+        key=lambda record: build_requirement_priority_sort_key(
+            record.requirement,
+            record.original_index,
+            priority_lookup,
+        ),
+    )
 
 
 def _build_strengths(
-    payload: MatchAnalysisRequest,
-    requirement_matches: list[RequirementMatch],
+    requirement_records: list[RequirementEvaluationRecord],
     keyword_coverage: list[str],
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
 ) -> list[str]:
     """Build a short list of candidate strengths relative to the job posting."""
     strengths: list[str] = []
 
-    for requirement, requirement_match in zip(payload.job_posting.requirements, requirement_matches):
-        if requirement_match.match_status == "matched":
-            _append_unique(strengths, f"Matched requirement: {requirement.text}")
+    for record in requirement_records:
+        if record.requirement_match.match_status != "matched":
+            continue
+
+        priority_label = _get_requirement_priority_label(record.requirement, priority_lookup)
+        if priority_label is not None:
+            _append_unique(
+                strengths,
+                f"Matched {priority_label}: {record.requirement.text}",
+            )
+            continue
+
+        _append_unique(strengths, f"Matched requirement: {record.requirement.text}")
 
     if keyword_coverage:
         _append_unique(
@@ -1777,39 +2626,51 @@ def _build_strengths(
 
 
 def _build_gaps(
-    payload: MatchAnalysisRequest,
-    requirement_matches: list[RequirementMatch],
+    requirement_records: list[RequirementEvaluationRecord],
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
 ) -> list[str]:
     """Build a short list of gaps, partial matches, and non-verifiable requirements."""
     gaps: list[str] = []
 
-    for requirement, requirement_match in zip(payload.job_posting.requirements, requirement_matches):
+    for record in requirement_records:
+        requirement = record.requirement
+        requirement_match = record.requirement_match
+        priority_label = _get_requirement_priority_label(requirement, priority_lookup)
+        if priority_label is None:
+            partial_prefix = "Partially matched requirement"
+            missing_prefix = "Missing requirement"
+            unverifiable_prefix = "Could not verify requirement"
+        else:
+            partial_prefix = f"Partially matched {priority_label}"
+            missing_prefix = f"Missing {priority_label}"
+            unverifiable_prefix = f"Could not verify {priority_label}"
+
         if requirement_match.match_status == "partial":
             if requirement_match.missing_elements:
                 _append_unique(
                     gaps,
                     (
-                        f"Partially matched requirement: {requirement.text}. "
+                        f"{partial_prefix}: {requirement.text}. "
                         f"Still needs: {', '.join(requirement_match.missing_elements)}"
                     ),
                 )
             else:
-                _append_unique(gaps, f"Partially matched requirement: {requirement_match.explanation}")
+                _append_unique(gaps, f"{partial_prefix}: {requirement_match.explanation}")
         elif requirement_match.match_status == "missing":
             if requirement_match.missing_elements:
                 _append_unique(
                     gaps,
                     (
-                        f"Missing requirement: {requirement.text}. "
+                        f"{missing_prefix}: {requirement.text}. "
                         f"Missing: {', '.join(requirement_match.missing_elements)}"
                     ),
                 )
             else:
-                _append_unique(gaps, f"Missing requirement: {requirement.text}.")
+                _append_unique(gaps, f"{missing_prefix}: {requirement.text}.")
         elif requirement_match.match_status == "not_verifiable":
             _append_unique(
                 gaps,
-                f"Could not verify requirement: {requirement.text}. {requirement_match.explanation}",
+                f"{unverifiable_prefix}: {requirement.text}. {requirement_match.explanation}",
             )
 
     return gaps
@@ -1817,6 +2678,7 @@ def _build_gaps(
 
 def _build_final_summary(
     job_title: str,
+    score_breakdown: MatchScoreBreakdown,
     overall_score: float,
     fit_classification: str,
     recommendation: str,
@@ -1826,32 +2688,110 @@ def _build_final_summary(
     not_verifiable_requirements_count: int,
     total_requirements: int,
     keyword_coverage: list[str],
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+    semantic_upgrade_count: int = 0,
 ) -> str:
     """Build the final user-facing summary of the matching result."""
     covered_keywords = ", ".join(keyword_coverage) if keyword_coverage else "none"
+    coverage_parts: list[str] = []
+    if score_breakdown.core_coverage is not None:
+        coverage_parts.append(f"core {score_breakdown.core_coverage:.2f}")
+    if score_breakdown.supporting_coverage is not None:
+        coverage_parts.append(f"supporting {score_breakdown.supporting_coverage:.2f}")
+    if score_breakdown.contextual_coverage is not None:
+        coverage_parts.append(f"contextual {score_breakdown.contextual_coverage:.2f}")
+    coverage_summary = ", ".join(coverage_parts) if coverage_parts else "none"
+
     summary = (
         f"Profile fit for '{job_title}' is {fit_classification} with score "
         f"{overall_score:.2f}. Requirements summary: {matched_requirements_count} matched, "
         f"{partial_requirements_count} partial, {missing_requirements_count} missing, "
         f"{not_verifiable_requirements_count} not verifiable out of {total_requirements}. "
-        f"Recommendation: {recommendation}. Covered job keywords: {covered_keywords}."
+        f"Tier-aware coverage: {coverage_summary}. Recommendation: {recommendation}. "
+        f"Covered job keywords: {covered_keywords}."
     )
-    if not_verifiable_requirements_count:
+    if score_breakdown.core_missing_count or score_breakdown.core_partial_count or score_breakdown.critical_not_verifiable_count:
+        summary = (
+            f"{summary} Critical fit signals: {score_breakdown.core_missing_count} core missing, "
+            f"{score_breakdown.core_partial_count} core partial, "
+            f"{score_breakdown.critical_not_verifiable_count} critical not verifiable."
+        )
+    if score_breakdown.pending_confirmation_count:
+        summary = (
+            f"{summary} Pending confirmations: {score_breakdown.pending_confirmation_count} "
+            "operational or manual-confirmation item(s) remain unresolved."
+        )
+    elif not_verifiable_requirements_count:
         summary = (
             f"{summary} Some requirements could not be verified from the currently stored profile data."
+        )
+    if priority_lookup:
+        tier_counts = count_requirement_priority_tiers(priority_lookup)
+        summary = (
+            f"{summary} AI requirement prioritization identified "
+            f"{tier_counts['core']} core, {tier_counts['supporting']} supporting, "
+            f"and {tier_counts['low_signal']} low-signal requirements."
+        )
+    if semantic_upgrade_count:
+        summary = (
+            f"{summary} AI semantic requirement matching improved {semantic_upgrade_count} "
+            f"requirement decision{'' if semantic_upgrade_count == 1 else 's'} using grounded candidate evidence."
         )
     return summary
 
 
-def analyze_match_basic(payload: MatchAnalysisRequest) -> MatchResult:
+def analyze_match_basic(
+    payload: MatchAnalysisRequest,
+    *,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
+) -> MatchResult:
     """Analyze candidate-vs-job fit using category-aware deterministic evidence."""
-    context = _build_candidate_evidence_context(payload)
+    profile_understanding = candidate_profile_understanding
+    if profile_understanding is None and _has_configured_openai_api_key():
+        profile_understanding = get_candidate_profile_understanding(payload.candidate_profile)
+
+    context = _build_candidate_evidence_context(
+        payload,
+        candidate_profile_understanding=profile_understanding,
+    )
+    priority_lookup = requirement_priority_lookup
+    if priority_lookup is None and _has_configured_openai_api_key():
+        priority_lookup = get_requirement_priority_lookup(payload.job_posting)
+    if priority_lookup is None:
+        priority_lookup = {}
     grouped_matches = [
         _evaluate_requirement(requirement, context)
         for requirement in payload.job_posting.requirements
     ]
     requirement_groups = [group_name for group_name, _ in grouped_matches]
     requirement_matches = [match for _, match in grouped_matches]
+    requirement_records = [
+        RequirementEvaluationRecord(
+            original_index=index,
+            requirement=requirement,
+            requirement_group=group_name,
+            requirement_match=requirement_match,
+        )
+        for index, (requirement, group_name, requirement_match) in enumerate(
+            zip(
+                payload.job_posting.requirements,
+                requirement_groups,
+                requirement_matches,
+            )
+        )
+    ]
+    requirement_records, semantic_upgrade_count = _apply_ai_requirement_candidate_matching(
+        payload,
+        requirement_records,
+        context,
+        priority_lookup,
+    )
+    requirement_matches = [record.requirement_match for record in requirement_records]
+    ordered_requirement_records = _order_requirement_records(requirement_records, priority_lookup)
+    ordered_requirement_matches = [
+        record.requirement_match for record in ordered_requirement_records
+    ]
 
     matched_requirements_count = sum(
         1 for requirement_match in requirement_matches if requirement_match.match_status == "matched"
@@ -1869,44 +2809,50 @@ def analyze_match_basic(payload: MatchAnalysisRequest) -> MatchResult:
     )
 
     total_requirements = len(payload.job_posting.requirements)
-    overall_score = _calculate_weighted_score(
-        payload.job_posting.requirements,
-        requirement_groups,
-        requirement_matches,
+    score_breakdown = _calculate_match_score_breakdown(
+        requirement_records,
+        priority_lookup,
     )
-    rounded_score = round(overall_score, 2)
-    fit_classification = _apply_fit_classification_gating(
-        _calculate_fit_classification(rounded_score),
-        payload.job_posting.requirements,
-        requirement_matches,
-    )
-
-    recommendation = _apply_recommendation_gating(
-        _build_recommendation(fit_classification),
-        payload.job_posting.requirements,
-        requirement_groups,
-        requirement_matches,
+    rounded_score = round(score_breakdown.overall_score, 2)
+    fit_classification = _calculate_fit_classification(score_breakdown)
+    recommendation = _build_recommendation(
+        fit_classification,
+        score_breakdown,
     )
 
-    keyword_coverage = [
-        keyword
-        for keyword in payload.job_posting.keywords
-        if _normalize(keyword) in context.candidate_keywords
-    ]
+    keyword_coverage = build_display_keywords(
+        [
+            keyword
+            for keyword in build_reportable_offer_terms(
+                payload.job_posting,
+                requirement_priority_lookup=priority_lookup,
+            )
+            if _normalize(keyword) in context.candidate_keywords
+        ],
+        max_items=_MAX_KEYWORD_COVERAGE,
+    )
 
-    strengths = _build_strengths(payload, requirement_matches, keyword_coverage)
-    gaps = _build_gaps(payload, requirement_matches)
+    strengths = _build_strengths(
+        ordered_requirement_records,
+        keyword_coverage,
+        priority_lookup,
+    )
+    gaps = _build_gaps(
+        ordered_requirement_records,
+        priority_lookup,
+    )
 
     return MatchResult(
         overall_score=rounded_score,
         fit_classification=fit_classification,
         recommendation=recommendation,
-        requirement_matches=requirement_matches,
+        requirement_matches=ordered_requirement_matches,
         strengths=strengths,
         gaps=gaps,
         keyword_coverage=keyword_coverage,
         final_summary=_build_final_summary(
             payload.job_posting.title,
+            score_breakdown,
             rounded_score,
             fit_classification,
             recommendation,
@@ -1916,5 +2862,7 @@ def analyze_match_basic(payload: MatchAnalysisRequest) -> MatchResult:
             not_verifiable_requirements_count,
             total_requirements,
             keyword_coverage,
+            priority_lookup,
+            semantic_upgrade_count,
         ),
     )

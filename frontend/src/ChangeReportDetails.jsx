@@ -38,13 +38,15 @@ function getBadgeTone(value) {
  * @returns {string} Readable source label.
  */
 function describeMatchSource(matchSource) {
-  if (matchSource?.type === "saved") {
-    return `Zapisany wynik #${matchSource.id}`;
+  if (matchSource?.type === "snapshot" || matchSource?.type === "saved") {
+    return matchSource?.id
+      ? `Swiezy aktywny wynik roboczy zapisany jako snapshot #${matchSource.id}`
+      : "Swiezy aktywny wynik roboczy zapisany jako snapshot historii";
   }
-  if (matchSource?.type === "inline") {
-    return "Wynik policzony w tej sesji";
+  if (matchSource?.type === "session_unsaved" || matchSource?.type === "inline") {
+    return "Swiezy aktywny wynik roboczy policzony w tej sesji";
   }
-  return "Brak aktywnego dopasowania";
+  return "Brak aktywnego dopasowania roboczego";
 }
 
 /**

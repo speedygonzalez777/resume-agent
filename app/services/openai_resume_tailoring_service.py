@@ -14,6 +14,9 @@ from app.models.job import JobPosting
 from app.models.match import MatchResult
 from app.models.resume import ResumeFallbackReason
 from app.prompts.resume_tailoring_prompt import RESUME_TAILORING_INSTRUCTIONS
+from app.services.openai_candidate_profile_understanding_service import (
+    CandidateProfileUnderstanding,
+)
 
 _DEFAULT_RESUME_TAILORING_MODEL = "gpt-5-mini"
 _SAMPLING_CAPABLE_MODEL_PREFIXES = (
@@ -135,6 +138,8 @@ def generate_resume_tailoring_with_openai(
     candidate_profile: CandidateProfile,
     job_posting: JobPosting,
     match_result: MatchResult,
+    *,
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
 ) -> OpenAIResumeTailoringOutput:
     """Generate structured, truthful-first resume tailoring hints with OpenAI."""
 
@@ -155,6 +160,7 @@ def generate_resume_tailoring_with_openai(
                 job_posting,
                 match_result,
                 model_name,
+                candidate_profile_understanding,
             )
         )
     except ResumeTailoringOpenAIError:
@@ -188,13 +194,19 @@ def _build_responses_parse_kwargs(
     job_posting: JobPosting,
     match_result: MatchResult,
     model_name: str,
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI Responses API payload for structured resume tailoring."""
 
     request_kwargs: dict[str, Any] = {
         "model": model_name,
         "instructions": RESUME_TAILORING_INSTRUCTIONS,
-        "input": _build_resume_tailoring_input(candidate_profile, job_posting, match_result),
+        "input": _build_resume_tailoring_input(
+            candidate_profile,
+            job_posting,
+            match_result,
+            candidate_profile_understanding,
+        ),
         "text_format": OpenAIResumeTailoringOutput,
     }
     request_kwargs.update(_build_optional_parse_kwargs(model_name))
@@ -205,6 +217,7 @@ def _build_resume_tailoring_input(
     candidate_profile: CandidateProfile,
     job_posting: JobPosting,
     match_result: MatchResult,
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
 ) -> str:
     """Build a compact but traceable evidence pack sent to the model."""
 
@@ -280,6 +293,11 @@ def _build_resume_tailoring_input(
         },
         "job_posting": job_posting.model_dump(mode="json"),
         "match_result": match_result.model_dump(mode="json"),
+        "candidate_profile_understanding": (
+            candidate_profile_understanding.model_dump(mode="json")
+            if candidate_profile_understanding is not None
+            else None
+        ),
         "selection_options": {
             "education_entries": education_options,
             "language_entries": language_options,

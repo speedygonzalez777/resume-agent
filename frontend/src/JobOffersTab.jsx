@@ -83,7 +83,7 @@ function buildParsedPreviewStats(jobPosting) {
  *
  * @returns {JSX.Element} Offer-management tab content.
  */
-export default function JobOffersTab() {
+export default function JobOffersTab({ onJobSaved }) {
   const [backendStatus, setBackendStatus] = useState("Sprawdzanie...");
   const [jobUrl, setJobUrl] = useState("");
   const [parsedJobPosting, setParsedJobPosting] = useState(null);
@@ -218,6 +218,7 @@ export default function JobOffersTab() {
     try {
       const payload = await saveJobPosting(parsedJobPosting, jobUrl.trim());
       await refreshJobHistory();
+      onJobSaved?.();
 
       if (payload?.id) {
         await selectStoredJob(payload.id);

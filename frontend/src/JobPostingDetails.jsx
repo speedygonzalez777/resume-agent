@@ -2,6 +2,59 @@
  * Structured presentation of a JobPosting with a collapsible raw JSON block.
  */
 
+const SHORT_DISPLAY_KEYWORD_CANONICAL_MAP = {
+  ai: "AI",
+  api: "API",
+  aws: "AWS",
+  bi: "BI",
+  cad: "CAD",
+  erp: "ERP",
+  gcp: "GCP",
+  hmi: "HMI",
+  mes: "MES",
+  ml: "ML",
+  plc: "PLC",
+  qa: "QA",
+  sap: "SAP",
+  sql: "SQL",
+  ui: "UI",
+  ux: "UX",
+};
+const MAX_VISIBLE_JOB_KEYWORDS = 12;
+
+function normalizeDisplayKeyword(value) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[,;: ]+|[,;: ]+$/g, "");
+}
+
+function buildDisplayKeywords(values) {
+  const nextValues = [];
+  const seenKeys = new Set();
+
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const normalizedKeyword = normalizeDisplayKeyword(value).toLowerCase();
+    if (!normalizedKeyword) {
+      return;
+    }
+
+    const isSingleAlphaToken = /^[a-z]+$/.test(normalizedKeyword);
+    if (isSingleAlphaToken && normalizedKeyword.length < 4 && !(normalizedKeyword in SHORT_DISPLAY_KEYWORD_CANONICAL_MAP)) {
+      return;
+    }
+
+    if (seenKeys.has(normalizedKeyword)) {
+      return;
+    }
+
+    seenKeys.add(normalizedKeyword);
+    nextValues.push(SHORT_DISPLAY_KEYWORD_CANONICAL_MAP[normalizedKeyword] ?? normalizeDisplayKeyword(value));
+  });
+
+  return nextValues.slice(0, MAX_VISIBLE_JOB_KEYWORDS);
+}
+
 /**
  * Split requirement items into must-have and nice-to-have groups.
  *
@@ -45,7 +98,7 @@ function buildJobMetaChips(jobPosting) {
 export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON" }) {
   const responsibilities = Array.isArray(jobPosting?.responsibilities) ? jobPosting.responsibilities : [];
   const requirements = Array.isArray(jobPosting?.requirements) ? jobPosting.requirements : [];
-  const keywords = Array.isArray(jobPosting?.keywords) ? jobPosting.keywords : [];
+  const keywords = buildDisplayKeywords(jobPosting?.keywords);
   const { mustHave, niceToHave } = splitRequirementsByType(requirements);
   const metaChips = buildJobMetaChips(jobPosting);
 

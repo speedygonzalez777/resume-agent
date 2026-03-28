@@ -273,6 +273,8 @@ export function createEmptyCandidateProfileFormState() {
     },
     target_roles: [],
     professional_summary_base: "",
+    soft_skill_entries: [],
+    interest_entries: [],
     experience_entries: [],
     project_entries: [],
     skill_entries: [],
@@ -310,6 +312,8 @@ export function createCandidateProfileFormStateFromProfile(profile) {
     },
     target_roles: normalizeStringList(profile?.target_roles),
     professional_summary_base: normalizeString(profile?.professional_summary_base),
+    soft_skill_entries: normalizeStringList(profile?.soft_skill_entries),
+    interest_entries: normalizeStringList(profile?.interest_entries),
     experience_entries: Array.isArray(profile?.experience_entries)
       ? profile.experience_entries.map((entry) => ({
           id: normalizeString(entry?.id) || createClientId("exp"),
@@ -503,6 +507,8 @@ export function buildCandidateProfilePayload(formState) {
     },
     target_roles: normalizeStringList(formState.target_roles),
     professional_summary_base: normalizeString(formState.professional_summary_base),
+    soft_skill_entries: normalizeStringList(formState.soft_skill_entries),
+    interest_entries: normalizeStringList(formState.interest_entries),
     experience_entries: formState.experience_entries
       .filter((entry) => !isEmptyExperienceEntry(entry))
       .map((entry) => ({
@@ -1581,6 +1587,34 @@ export default function CandidateProfileForm({
         ) : (
           <p className="placeholder">Dodaj umiejetnosci, ktore warto brac pod uwage w matchingu.</p>
         )}
+      </FormSection>
+
+      <FormSection
+        title="Soft skills"
+        description="Jawnie wpisane umiejetnosci miekkie, ktore chcesz pokazac w profilu."
+        summary={`${formValue.soft_skill_entries.length} pozycji`}
+      >
+        <TagListInput
+          label="Soft skills"
+          items={formValue.soft_skill_entries}
+          onChange={(items) => updateTopLevelField("soft_skill_entries", items)}
+          placeholder="Np. communication"
+          addLabel="Dodaj soft skill"
+        />
+      </FormSection>
+
+      <FormSection
+        title="Obszary zainteresowań"
+        description="Tematy, dziedziny i obszary, ktore chcesz jawnie powiazac ze swoim profilem."
+        summary={`${formValue.interest_entries.length} pozycji`}
+      >
+        <TagListInput
+          label="Obszary zainteresowań"
+          items={formValue.interest_entries}
+          onChange={(items) => updateTopLevelField("interest_entries", items)}
+          placeholder="Np. automation"
+          addLabel="Dodaj obszar"
+        />
       </FormSection>
 
       <FormSection

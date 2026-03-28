@@ -6,13 +6,11 @@ import { useState } from "react";
 
 import CandidateProfileTab from "./CandidateProfileTab";
 import JobOffersTab from "./JobOffersTab";
-import MatchingTab from "./MatchingTab";
 import ResumeTab from "./ResumeTab";
 
 const TAB_DEFINITIONS = [
   { id: "jobs", label: "Oferty pracy" },
   { id: "profile", label: "Profil kandydata" },
-  { id: "matching", label: "Matching" },
   { id: "resume", label: "CV i list motywacyjny" },
 ];
 
@@ -23,6 +21,11 @@ const TAB_DEFINITIONS = [
  */
 export default function App() {
   const [activeTab, setActiveTab] = useState("jobs");
+  const [jobListRefreshVersion, setJobListRefreshVersion] = useState(0);
+
+  function handleJobSaved() {
+    setJobListRefreshVersion((currentValue) => currentValue + 1);
+  }
 
   return (
     <main className="app-shell">
@@ -50,19 +53,15 @@ export default function App() {
         </nav>
 
         <section className="tab-panel" hidden={activeTab !== "jobs"}>
-          <JobOffersTab />
+          <JobOffersTab onJobSaved={handleJobSaved} />
         </section>
 
         <section className="tab-panel" hidden={activeTab !== "profile"}>
           <CandidateProfileTab />
         </section>
 
-        <section className="tab-panel" hidden={activeTab !== "matching"}>
-          <MatchingTab />
-        </section>
-
         <section className="tab-panel" hidden={activeTab !== "resume"}>
-          <ResumeTab />
+          <ResumeTab jobListRefreshVersion={jobListRefreshVersion} />
         </section>
       </section>
     </main>

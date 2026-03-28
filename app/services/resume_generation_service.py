@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Iterable
 
@@ -20,7 +21,20 @@ from app.models.resume import (
     ResumeMatchResultSource,
     ResumeProjectEntry,
 )
+from app.services.display_keyword_utils import build_display_keywords
 from app.services.match_service import analyze_match_basic
+from app.services.openai_candidate_profile_understanding_service import (
+    CandidateProfileUnderstanding,
+    get_candidate_profile_understanding,
+)
+from app.services.openai_requirement_priority_service import (
+    OpenAIRequirementPriorityItem,
+    get_requirement_priority_lookup,
+)
+from app.services.reportable_term_utils import (
+    build_reportable_offer_terms,
+    build_requirement_reportable_terms_lookup,
+)
 from app.services.openai_resume_tailoring_service import (
     OpenAIResumeTailoringOutput,
     ResumeTailoringOpenAIError,
@@ -43,6 +57,9 @@ _MAX_SELECTED_SKILLS = 10
 _MAX_SELECTED_EDUCATION = 2
 _MAX_SELECTED_LANGUAGES = 3
 _MAX_SELECTED_CERTIFICATES = 3
+_MAX_REPORTABLE_JOB_KEYWORDS = 12
+_MAX_HIGHLIGHTED_KEYWORDS = 6
+_MAX_DECLARED_INTERESTS_IN_FIT_SUMMARY = 2
 _CONTENT_TOKEN_STOPWORDS = {
     "about",
     "across",
@@ -88,6 +105,13 @@ def _normalize(value: str | None) -> str:
     return value.strip().lower()
 
 
+def _has_configured_openai_api_key() -> bool:
+    """Return whether a usable OpenAI API key is configured for optional AI helpers."""
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    return bool(api_key and api_key != "tu_wkleisz_swoj_klucz")
+
+
 def _append_unique(target: list[str], value: str | None) -> None:
     """Append a non-empty string to a list while preserving uniqueness."""
     normalized_value = value.strip() if value else ""
@@ -124,17 +148,18 @@ def _collect_job_keywords(job_posting: JobPosting) -> list[str]:
     return keywords
 
 
-def _collect_job_reportable_keywords(job_posting: JobPosting) -> list[str]:
+def _collect_job_reportable_keywords(
+    job_posting: JobPosting,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+) -> list[str]:
     """Collect the canonical keyword set shown in the public draft/report contract."""
-    keywords: list[str] = []
-
-    for keyword in job_posting.keywords:
-        _append_unique(keywords, keyword)
-    for requirement in job_posting.requirements:
-        for keyword in requirement.extracted_keywords:
-            _append_unique(keywords, keyword)
-
-    return keywords
+    return build_display_keywords(
+        build_reportable_offer_terms(
+            job_posting,
+            requirement_priority_lookup=requirement_priority_lookup,
+        ),
+        max_items=_MAX_REPORTABLE_JOB_KEYWORDS,
+    )
 
 
 def _extract_numeric_tokens(text: str | None) -> list[str]:
@@ -278,6 +303,142 @@ def _find_keyword_hits(keywords: Iterable[str], texts: Iterable[str]) -> list[st
     return hits
 
 
+def _filter_reportable_keyword_hits(
+    keywords: Iterable[str],
+    reportable_job_keywords: list[str],
+    *,
+    max_items: int | None = None,
+) -> list[str]:
+    """Keep only user-facing keyword hits that belong to the cleaned reportable keyword set."""
+    allowed_keywords = {_normalize(keyword) for keyword in reportable_job_keywords}
+    return build_display_keywords(
+        [keyword for keyword in keywords if _normalize(keyword) in allowed_keywords],
+        max_items=max_items,
+    )
+
+
+def _build_source_signal_term_lookup(
+    candidate_profile_understanding: CandidateProfileUnderstanding | None,
+) -> dict[tuple[str, str], list[str]]:
+    """Collect cleaned source-level signal labels/terms from candidate understanding."""
+    if candidate_profile_understanding is None:
+        return {}
+
+    lookup: dict[tuple[str, str], list[str]] = {}
+    for signal in candidate_profile_understanding.source_signals:
+        key = (signal.source_type, signal.source_id)
+        terms = lookup.setdefault(key, [])
+        for value in build_display_keywords([signal.signal_label, *signal.normalized_terms]):
+            _append_unique(terms, value)
+    return lookup
+
+
+def _source_signal_supports_term(term: str, source_signal_terms: list[str]) -> bool:
+    """Return whether a reportable term is corroborated by source-level semantic signals."""
+    normalized_term = _normalize(term)
+    if not normalized_term:
+        return False
+
+    for source_term in source_signal_terms:
+        normalized_source_term = _normalize(source_term)
+        if not normalized_source_term:
+            continue
+        if normalized_term == normalized_source_term:
+            return True
+        if len(normalized_term) >= 4 and len(normalized_source_term) >= 4:
+            if normalized_term in normalized_source_term or normalized_source_term in normalized_term:
+                return True
+    return False
+
+
+def _collect_linked_requirement_ids_for_source(
+    match_result: MatchResult,
+    *,
+    source_type: str,
+    source_id: str,
+) -> list[str]:
+    """Collect requirement IDs grounded by a specific experience/project source."""
+    linked_requirement_ids: list[str] = []
+
+    for requirement_match in match_result.requirement_matches:
+        if source_type == "experience" and source_id in requirement_match.matched_experience_ids:
+            _append_unique(linked_requirement_ids, requirement_match.requirement_id)
+        elif source_type == "project" and source_id in requirement_match.matched_project_ids:
+            _append_unique(linked_requirement_ids, requirement_match.requirement_id)
+
+    return linked_requirement_ids
+
+
+def _build_source_reportable_term_candidates(
+    *,
+    source_type: str,
+    source_id: str,
+    linked_requirement_ids: list[str],
+    requirement_reportable_terms_lookup: dict[str, list[str]],
+    source_signal_term_lookup: dict[tuple[str, str], list[str]],
+    reportable_job_keywords: list[str],
+) -> list[str]:
+    """Build the clean reportable-term candidate set relevant to one source entry."""
+    allowed_keywords = {_normalize(keyword) for keyword in reportable_job_keywords}
+    candidates: list[str] = []
+
+    for requirement_id in linked_requirement_ids:
+        for term in requirement_reportable_terms_lookup.get(requirement_id, []):
+            if _normalize(term) in allowed_keywords:
+                _append_unique(candidates, term)
+
+    for term in source_signal_term_lookup.get((source_type, source_id), []):
+        if _normalize(term) in allowed_keywords:
+            _append_unique(candidates, term)
+
+    return build_display_keywords(candidates)
+
+
+def _build_source_highlighted_keywords(
+    *,
+    source_type: str,
+    source_id: str,
+    source_texts: list[str],
+    linked_requirement_ids: list[str],
+    requirement_reportable_terms_lookup: dict[str, list[str]],
+    source_signal_term_lookup: dict[tuple[str, str], list[str]],
+    reportable_job_keywords: list[str],
+) -> list[str]:
+    """Build grounded highlighted keywords for one experience/project source."""
+    source_reportable_candidates = _build_source_reportable_term_candidates(
+        source_type=source_type,
+        source_id=source_id,
+        linked_requirement_ids=linked_requirement_ids,
+        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+        source_signal_term_lookup=source_signal_term_lookup,
+        reportable_job_keywords=reportable_job_keywords,
+    )
+    if not source_reportable_candidates:
+        return []
+
+    highlighted_keywords: list[str] = []
+    source_signal_terms = source_signal_term_lookup.get((source_type, source_id), [])
+
+    for keyword in _find_keyword_hits(source_reportable_candidates, source_texts):
+        _append_unique(highlighted_keywords, keyword)
+
+    for keyword in source_reportable_candidates:
+        if _source_signal_supports_term(keyword, source_signal_terms):
+            _append_unique(highlighted_keywords, keyword)
+
+    if not highlighted_keywords:
+        for requirement_id in linked_requirement_ids:
+            requirement_terms = requirement_reportable_terms_lookup.get(requirement_id, [])
+            if requirement_terms:
+                _append_unique(highlighted_keywords, requirement_terms[0])
+
+    return _filter_reportable_keyword_hits(
+        highlighted_keywords,
+        reportable_job_keywords,
+        max_items=_MAX_HIGHLIGHTED_KEYWORDS,
+    )
+
+
 def _get_importance_weight(requirement: Requirement | None) -> float:
     """Return the relevance weight of a requirement."""
     if requirement is None:
@@ -295,11 +456,12 @@ def _score_experience(
     match_result: MatchResult,
     requirement_lookup: dict[str, Requirement],
     job_keywords: list[str],
-) -> tuple[float, list[str], list[str]]:
+    reportable_job_keywords: list[str],
+    requirement_reportable_terms_lookup: dict[str, list[str]],
+    source_signal_term_lookup: dict[tuple[str, str], list[str]],
+) -> tuple[float, list[str], list[str], list[str]]:
     """Score one experience entry using match evidence and lightweight keyword overlap."""
     score = 0.0
-    highlighted_keywords: list[str] = []
-    linked_requirement_ids: list[str] = []
     experience_texts = _collect_text_values(
         [
             experience.position_title,
@@ -309,6 +471,11 @@ def _score_experience(
             *experience.achievements,
         ]
     )
+    linked_requirement_ids = _collect_linked_requirement_ids_for_source(
+        match_result,
+        source_type="experience",
+        source_id=experience.id,
+    )
 
     for requirement_match in match_result.requirement_matches:
         if experience.id not in requirement_match.matched_experience_ids:
@@ -317,18 +484,33 @@ def _score_experience(
         requirement = requirement_lookup.get(requirement_match.requirement_id)
         weight = _get_importance_weight(requirement) * _get_match_weight(requirement_match)
         score += weight
-        _append_unique(linked_requirement_ids, requirement_match.requirement_id)
-
-        if requirement is not None:
-            for keyword in _find_keyword_hits(requirement.extracted_keywords, experience_texts):
-                _append_unique(highlighted_keywords, keyword)
 
     overlap_hits = _find_keyword_hits(job_keywords, experience_texts)
     score += len(overlap_hits) * 0.3
-    for keyword in overlap_hits:
-        _append_unique(highlighted_keywords, keyword)
+    source_reportable_candidates = _build_source_reportable_term_candidates(
+        source_type="experience",
+        source_id=experience.id,
+        linked_requirement_ids=linked_requirement_ids,
+        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+        source_signal_term_lookup=source_signal_term_lookup,
+        reportable_job_keywords=reportable_job_keywords,
+    )
+    highlighted_keywords = _build_source_highlighted_keywords(
+        source_type="experience",
+        source_id=experience.id,
+        source_texts=experience_texts,
+        linked_requirement_ids=linked_requirement_ids,
+        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+        source_signal_term_lookup=source_signal_term_lookup,
+        reportable_job_keywords=reportable_job_keywords,
+    )
 
-    return score, highlighted_keywords, linked_requirement_ids
+    return (
+        score,
+        highlighted_keywords,
+        source_reportable_candidates,
+        linked_requirement_ids,
+    )
 
 
 def _score_project(
@@ -336,11 +518,12 @@ def _score_project(
     match_result: MatchResult,
     requirement_lookup: dict[str, Requirement],
     job_keywords: list[str],
-) -> tuple[float, list[str], list[str]]:
+    reportable_job_keywords: list[str],
+    requirement_reportable_terms_lookup: dict[str, list[str]],
+    source_signal_term_lookup: dict[tuple[str, str], list[str]],
+) -> tuple[float, list[str], list[str], list[str]]:
     """Score one project entry using match evidence and keyword overlap."""
     score = 0.0
-    highlighted_keywords: list[str] = []
-    linked_requirement_ids: list[str] = []
     project_texts = _collect_text_values(
         [
             project.project_name,
@@ -351,6 +534,11 @@ def _score_project(
             *project.outcomes,
         ]
     )
+    linked_requirement_ids = _collect_linked_requirement_ids_for_source(
+        match_result,
+        source_type="project",
+        source_id=project.id,
+    )
 
     for requirement_match in match_result.requirement_matches:
         if project.id not in requirement_match.matched_project_ids:
@@ -359,18 +547,33 @@ def _score_project(
         requirement = requirement_lookup.get(requirement_match.requirement_id)
         weight = _get_importance_weight(requirement) * _get_match_weight(requirement_match)
         score += weight
-        _append_unique(linked_requirement_ids, requirement_match.requirement_id)
-
-        if requirement is not None:
-            for keyword in _find_keyword_hits(requirement.extracted_keywords, project_texts):
-                _append_unique(highlighted_keywords, keyword)
 
     overlap_hits = _find_keyword_hits(job_keywords, project_texts)
     score += len(overlap_hits) * 0.25
-    for keyword in overlap_hits:
-        _append_unique(highlighted_keywords, keyword)
+    source_reportable_candidates = _build_source_reportable_term_candidates(
+        source_type="project",
+        source_id=project.id,
+        linked_requirement_ids=linked_requirement_ids,
+        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+        source_signal_term_lookup=source_signal_term_lookup,
+        reportable_job_keywords=reportable_job_keywords,
+    )
+    highlighted_keywords = _build_source_highlighted_keywords(
+        source_type="project",
+        source_id=project.id,
+        source_texts=project_texts,
+        linked_requirement_ids=linked_requirement_ids,
+        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+        source_signal_term_lookup=source_signal_term_lookup,
+        reportable_job_keywords=reportable_job_keywords,
+    )
 
-    return score, highlighted_keywords, linked_requirement_ids
+    return (
+        score,
+        highlighted_keywords,
+        source_reportable_candidates,
+        linked_requirement_ids,
+    )
 
 
 def _select_top_bullets(
@@ -402,21 +605,36 @@ def _build_resume_experience_entries(
     match_result: MatchResult,
     requirement_lookup: dict[str, Requirement],
     job_keywords: list[str],
+    reportable_job_keywords: list[str],
+    requirement_reportable_terms_lookup: dict[str, list[str]],
+    source_signal_term_lookup: dict[tuple[str, str], list[str]],
 ) -> tuple[list[ResumeExperienceEntry], dict[str, list[str]]]:
     """Select and format the most relevant experience entries for the draft CV."""
-    scored_experiences: list[tuple[float, int, ExperienceEntry, list[str], list[str]]] = []
+    scored_experiences: list[
+        tuple[float, int, ExperienceEntry, list[str], list[str], list[str]]
+    ] = []
 
     for index, experience in enumerate(candidate_profile.experience_entries):
-        score, highlighted_keywords, linked_requirement_ids = _score_experience(
+        score, highlighted_keywords, source_reportable_candidates, linked_requirement_ids = _score_experience(
             experience,
             match_result,
             requirement_lookup,
             job_keywords,
+            reportable_job_keywords,
+            requirement_reportable_terms_lookup,
+            source_signal_term_lookup,
         )
         if score <= 0:
             continue
         scored_experiences.append(
-            (score, index, experience, highlighted_keywords, linked_requirement_ids)
+            (
+                score,
+                index,
+                experience,
+                highlighted_keywords,
+                source_reportable_candidates,
+                linked_requirement_ids,
+            )
         )
 
     scored_experiences.sort(key=lambda item: (-item[0], item[1]))
@@ -424,11 +642,18 @@ def _build_resume_experience_entries(
     selected_entries: list[ResumeExperienceEntry] = []
     selection_meta: dict[str, list[str]] = {}
 
-    for _, _, experience, highlighted_keywords, linked_requirement_ids in scored_experiences[:_MAX_SELECTED_EXPERIENCES]:
+    for (
+        _,
+        _,
+        experience,
+        highlighted_keywords,
+        source_reportable_candidates,
+        linked_requirement_ids,
+    ) in scored_experiences[:_MAX_SELECTED_EXPERIENCES]:
         bullet_candidates = [*experience.achievements, *experience.responsibilities]
         bullet_points = _select_top_bullets(
             bullet_candidates,
-            highlighted_keywords or job_keywords,
+            highlighted_keywords or source_reportable_candidates or reportable_job_keywords,
             fallback_limit=4,
         )
 
@@ -443,7 +668,7 @@ def _build_resume_experience_entries(
                     experience.is_current,
                 ),
                 bullet_points=bullet_points,
-                highlighted_keywords=highlighted_keywords[:6],
+                highlighted_keywords=highlighted_keywords,
             )
         )
         selection_meta[experience.id] = linked_requirement_ids
@@ -456,31 +681,55 @@ def _build_resume_project_entries(
     match_result: MatchResult,
     requirement_lookup: dict[str, Requirement],
     job_keywords: list[str],
+    reportable_job_keywords: list[str],
+    requirement_reportable_terms_lookup: dict[str, list[str]],
+    source_signal_term_lookup: dict[tuple[str, str], list[str]],
 ) -> tuple[list[ResumeProjectEntry], dict[str, list[str]]]:
     """Select and format the most relevant project entries for the draft CV."""
-    scored_projects: list[tuple[float, int, ProjectEntry, list[str], list[str]]] = []
+    scored_projects: list[
+        tuple[float, int, ProjectEntry, list[str], list[str], list[str]]
+    ] = []
 
     for index, project in enumerate(candidate_profile.project_entries):
-        score, highlighted_keywords, linked_requirement_ids = _score_project(
+        score, highlighted_keywords, source_reportable_candidates, linked_requirement_ids = _score_project(
             project,
             match_result,
             requirement_lookup,
             job_keywords,
+            reportable_job_keywords,
+            requirement_reportable_terms_lookup,
+            source_signal_term_lookup,
         )
         if score <= 0:
             continue
-        scored_projects.append((score, index, project, highlighted_keywords, linked_requirement_ids))
+        scored_projects.append(
+            (
+                score,
+                index,
+                project,
+                highlighted_keywords,
+                source_reportable_candidates,
+                linked_requirement_ids,
+            )
+        )
 
     scored_projects.sort(key=lambda item: (-item[0], item[1]))
 
     selected_entries: list[ResumeProjectEntry] = []
     selection_meta: dict[str, list[str]] = {}
 
-    for _, _, project, highlighted_keywords, linked_requirement_ids in scored_projects[:_MAX_SELECTED_PROJECTS]:
+    for (
+        _,
+        _,
+        project,
+        highlighted_keywords,
+        source_reportable_candidates,
+        linked_requirement_ids,
+    ) in scored_projects[:_MAX_SELECTED_PROJECTS]:
         bullet_candidates = [*project.outcomes, project.description]
         bullet_points = _select_top_bullets(
             bullet_candidates,
-            highlighted_keywords or job_keywords,
+            highlighted_keywords or source_reportable_candidates or reportable_job_keywords,
             fallback_limit=3,
         )
 
@@ -490,7 +739,7 @@ def _build_resume_project_entries(
                 project_name=project.project_name,
                 role=project.role,
                 bullet_points=bullet_points,
-                highlighted_keywords=highlighted_keywords[:6],
+                highlighted_keywords=highlighted_keywords,
             )
         )
         selection_meta[project.id] = linked_requirement_ids
@@ -646,6 +895,131 @@ def _build_professional_summary(
 
     return (
         f"{base_summary} Most relevant for the {job_posting.title} role: {relevant_skills}."
+    )
+
+
+def _collect_candidate_understanding_grounding_texts(
+    candidate_profile_understanding: CandidateProfileUnderstanding | None,
+) -> list[str]:
+    """Collect grounded semantic profile texts without turning them into hard-selected skills."""
+
+    if candidate_profile_understanding is None:
+        return []
+
+    return _collect_text_values(
+        [
+            *[
+                value
+                for signal in candidate_profile_understanding.source_signals
+                for value in [signal.signal_label, *signal.normalized_terms, *signal.supporting_snippets]
+            ],
+            *[
+                value
+                for signal in candidate_profile_understanding.profile_signals
+                for value in [signal.signal_label, *signal.normalized_terms]
+            ],
+            *[
+                value
+                for normalization in candidate_profile_understanding.language_normalizations
+                for value in [
+                    normalization.language_name,
+                    normalization.source_level,
+                    normalization.normalized_cefr.upper() if normalization.normalized_cefr else None,
+                    *normalization.semantic_descriptors,
+                ]
+            ],
+            *[
+                value
+                for alignment in candidate_profile_understanding.thematic_alignments
+                for value in [alignment.theme_label, *alignment.normalized_terms]
+            ],
+        ]
+    )
+
+
+def _collect_candidate_understanding_known_terms(
+    candidate_profile_understanding: CandidateProfileUnderstanding | None,
+) -> list[str]:
+    """Collect canonical profile-understanding terms used in grounding guardrails."""
+
+    if candidate_profile_understanding is None:
+        return []
+
+    known_terms = _collect_text_values(
+        [
+            *[
+                value
+                for signal in candidate_profile_understanding.profile_signals
+                for value in [signal.signal_label, *signal.normalized_terms]
+            ],
+            *[
+                value
+                for normalization in candidate_profile_understanding.language_normalizations
+                for value in [
+                    normalization.language_name,
+                    normalization.normalized_cefr.upper() if normalization.normalized_cefr else None,
+                    *normalization.semantic_descriptors,
+                ]
+            ],
+            *[
+                value
+                for alignment in candidate_profile_understanding.thematic_alignments
+                for value in [alignment.theme_label, *alignment.normalized_terms]
+            ],
+        ]
+    )
+    return list(dict.fromkeys(known_terms))
+
+
+def _select_declared_interest_alignment(
+    candidate_profile: CandidateProfile,
+    reportable_job_keywords: list[str],
+) -> list[str]:
+    """Pick declared interests that align with the offer without turning them into hard evidence."""
+    cleaned_interests = _clean_string_list(candidate_profile.interest_entries, limit=8)
+    if not cleaned_interests:
+        return []
+
+    direct_hits = _filter_reportable_keyword_hits(
+        cleaned_interests,
+        reportable_job_keywords,
+        max_items=_MAX_DECLARED_INTERESTS_IN_FIT_SUMMARY,
+    )
+    if direct_hits:
+        return direct_hits
+
+    thematic_hits: list[str] = []
+    normalized_keywords = [_normalize(keyword) for keyword in reportable_job_keywords if keyword]
+    for interest in cleaned_interests:
+        normalized_interest = _normalize(interest)
+        if len(normalized_interest) < 4:
+            continue
+        if any(
+            len(normalized_keyword) >= 4
+            and (normalized_interest in normalized_keyword or normalized_keyword in normalized_interest)
+            for normalized_keyword in normalized_keywords
+        ):
+            _append_unique(thematic_hits, interest)
+
+    return build_display_keywords(
+        thematic_hits,
+        max_items=_MAX_DECLARED_INTERESTS_IN_FIT_SUMMARY,
+    )
+
+
+def _build_fit_summary(
+    candidate_profile: CandidateProfile,
+    match_result: MatchResult,
+    reportable_job_keywords: list[str],
+) -> str:
+    """Build a fit summary that may mention aligned declared interests without implying competence."""
+    base_summary = match_result.final_summary.strip()
+    aligned_interests = _select_declared_interest_alignment(candidate_profile, reportable_job_keywords)
+    if not aligned_interests:
+        return base_summary
+
+    return (
+        f"{base_summary} Declared interest alignment: {', '.join(aligned_interests)}."
     )
 
 
@@ -986,9 +1360,17 @@ def _build_candidate_skill_lookup(candidate_profile: CandidateProfile) -> dict[s
     return lookup
 
 
-def _build_job_keyword_lookup(job_posting: JobPosting) -> dict[str, str]:
+def _build_job_keyword_lookup(
+    job_posting: JobPosting,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+) -> dict[str, str]:
     """Create the canonical set of job keywords the AI is allowed to emphasize."""
-    return _build_allowed_value_lookup(_collect_job_reportable_keywords(job_posting))
+    return _build_allowed_value_lookup(
+        _collect_job_reportable_keywords(
+            job_posting,
+            requirement_priority_lookup,
+        )
+    )
 
 
 def _build_selection_meta_from_match(
@@ -1027,13 +1409,17 @@ def _build_change_report(
     job_posting: JobPosting,
     match_result: MatchResult,
     resume_draft: ResumeDraft,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
     *,
     extra_warnings: Iterable[str] = (),
     extra_blocked_items: Iterable[str] = (),
     extra_omitted_items: Iterable[str] = (),
 ) -> ChangeReport:
     """Build a readable ChangeReport for either AI-assisted or fallback draft generation."""
-    reportable_job_keywords = _collect_job_reportable_keywords(job_posting)
+    reportable_job_keywords = _collect_job_reportable_keywords(
+        job_posting,
+        requirement_priority_lookup,
+    )
     experience_selection_meta, project_selection_meta = _build_selection_meta_from_match(
         match_result,
         resume_draft,
@@ -1075,23 +1461,41 @@ def _build_rule_based_resume_draft(
     candidate_profile: CandidateProfile,
     job_posting: JobPosting,
     match_result: MatchResult,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
 ) -> ResumeDraft:
     """Build the existing deterministic ResumeDraft used as a safe fallback."""
     requirement_lookup = _build_requirement_lookup(job_posting)
     job_keywords = _collect_job_keywords(job_posting)
-    reportable_job_keywords = _collect_job_reportable_keywords(job_posting)
+    reportable_job_keywords = _collect_job_reportable_keywords(
+        job_posting,
+        requirement_priority_lookup,
+    )
+    requirement_reportable_terms_lookup = build_requirement_reportable_terms_lookup(
+        job_posting,
+        requirement_priority_lookup=requirement_priority_lookup,
+    )
+    source_signal_term_lookup = _build_source_signal_term_lookup(
+        candidate_profile_understanding,
+    )
 
     selected_experience_entries, _ = _build_resume_experience_entries(
         candidate_profile,
         match_result,
         requirement_lookup,
         job_keywords,
+        reportable_job_keywords,
+        requirement_reportable_terms_lookup,
+        source_signal_term_lookup,
     )
     selected_project_entries, _ = _build_resume_project_entries(
         candidate_profile,
         match_result,
         requirement_lookup,
         job_keywords,
+        reportable_job_keywords,
+        requirement_reportable_terms_lookup,
+        source_signal_term_lookup,
     )
     selected_skills = _build_selected_skills(
         candidate_profile,
@@ -1112,7 +1516,7 @@ def _build_rule_based_resume_draft(
         header=_build_resume_header(candidate_profile, job_posting),
         target_job_title=job_posting.title,
         target_company_name=job_posting.company_name,
-        fit_summary=match_result.final_summary,
+        fit_summary=_build_fit_summary(candidate_profile, match_result, reportable_job_keywords),
         professional_summary=_build_professional_summary(
             candidate_profile,
             job_posting,
@@ -1134,14 +1538,37 @@ def _build_ai_assisted_resume_draft(
     job_posting: JobPosting,
     match_result: MatchResult,
     ai_output: OpenAIResumeTailoringOutput,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
 ) -> tuple[ResumeDraft, dict[str, list[str]]]:
     """Hydrate, validate and constrain the AI output into the public ResumeDraft contract."""
     requirement_lookup = _build_requirement_lookup(job_posting)
     job_keywords = _collect_job_keywords(job_posting)
-    reportable_job_keywords = _collect_job_reportable_keywords(job_posting)
-    job_keyword_lookup = _build_job_keyword_lookup(job_posting)
+    reportable_job_keywords = _collect_job_reportable_keywords(
+        job_posting,
+        requirement_priority_lookup,
+    )
+    requirement_reportable_terms_lookup = build_requirement_reportable_terms_lookup(
+        job_posting,
+        requirement_priority_lookup=requirement_priority_lookup,
+    )
+    source_signal_term_lookup = _build_source_signal_term_lookup(
+        candidate_profile_understanding,
+    )
+    job_keyword_lookup = _build_job_keyword_lookup(
+        job_posting,
+        requirement_priority_lookup,
+    )
     candidate_skill_lookup = _build_candidate_skill_lookup(candidate_profile)
-    candidate_known_terms = list(dict.fromkeys(candidate_skill_lookup.values()))
+    candidate_understanding_grounding_texts = _collect_candidate_understanding_grounding_texts(
+        candidate_profile_understanding,
+    )
+    candidate_understanding_known_terms = _collect_candidate_understanding_known_terms(
+        candidate_profile_understanding,
+    )
+    candidate_known_terms = list(
+        dict.fromkeys([*candidate_skill_lookup.values(), *candidate_understanding_known_terms])
+    )
     experience_lookup = {
         experience_entry.id: experience_entry for experience_entry in candidate_profile.experience_entries
     }
@@ -1176,20 +1603,37 @@ def _build_ai_assisted_resume_draft(
             *source_lines,
             *source_highlights,
         ]
-
-        source_keyword_hits = _find_keyword_hits(
-            job_keywords,
-            [
+        linked_requirement_ids = _collect_linked_requirement_ids_for_source(
+            match_result,
+            source_type="experience",
+            source_id=source_entry.id,
+        )
+        source_reportable_candidates = _build_source_reportable_term_candidates(
+            source_type="experience",
+            source_id=source_entry.id,
+            linked_requirement_ids=linked_requirement_ids,
+            requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+            source_signal_term_lookup=source_signal_term_lookup,
+            reportable_job_keywords=reportable_job_keywords,
+        )
+        source_highlighted_fallback = _build_source_highlighted_keywords(
+            source_type="experience",
+            source_id=source_entry.id,
+            source_texts=[
                 source_entry.position_title,
                 *source_entry.technologies_used,
                 *source_entry.keywords,
                 *source_entry.responsibilities,
                 *source_entry.achievements,
             ],
+            linked_requirement_ids=linked_requirement_ids,
+            requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+            source_signal_term_lookup=source_signal_term_lookup,
+            reportable_job_keywords=reportable_job_keywords,
         )
         highlighted_keywords = _filter_allowed_values(
             selection.highlighted_keywords,
-            _build_allowed_value_lookup(source_keyword_hits),
+            _build_allowed_value_lookup(source_reportable_candidates),
             limit=6,
         )
         bullet_points = _filter_grounded_generated_items(
@@ -1201,7 +1645,10 @@ def _build_ai_assisted_resume_draft(
         if not bullet_points or not source_highlights:
             bullet_points = _select_top_bullets(
                 source_lines,
-                highlighted_keywords or source_keyword_hits or job_keywords,
+                highlighted_keywords
+                or source_highlighted_fallback
+                or source_reportable_candidates
+                or reportable_job_keywords,
                 fallback_limit=4,
             )
             source_highlights = source_highlights or _clean_string_list(bullet_points, limit=3)
@@ -1218,7 +1665,11 @@ def _build_ai_assisted_resume_draft(
                     source_entry.is_current,
                 ),
                 bullet_points=bullet_points,
-                highlighted_keywords=highlighted_keywords or source_keyword_hits[:6],
+                highlighted_keywords=(
+                    highlighted_keywords
+                    or source_highlighted_fallback
+                    or source_reportable_candidates[:_MAX_HIGHLIGHTED_KEYWORDS]
+                ),
                 relevance_note=(selection.relevance_note or "").strip() or None,
                 source_highlights=source_highlights,
             )
@@ -1245,10 +1696,23 @@ def _build_ai_assisted_resume_draft(
             *source_lines,
             *source_highlights,
         ]
-
-        source_keyword_hits = _find_keyword_hits(
-            job_keywords,
-            [
+        linked_requirement_ids = _collect_linked_requirement_ids_for_source(
+            match_result,
+            source_type="project",
+            source_id=source_entry.id,
+        )
+        source_reportable_candidates = _build_source_reportable_term_candidates(
+            source_type="project",
+            source_id=source_entry.id,
+            linked_requirement_ids=linked_requirement_ids,
+            requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+            source_signal_term_lookup=source_signal_term_lookup,
+            reportable_job_keywords=reportable_job_keywords,
+        )
+        source_highlighted_fallback = _build_source_highlighted_keywords(
+            source_type="project",
+            source_id=source_entry.id,
+            source_texts=[
                 source_entry.project_name,
                 source_entry.role,
                 source_entry.description,
@@ -1256,10 +1720,14 @@ def _build_ai_assisted_resume_draft(
                 *source_entry.keywords,
                 *source_entry.outcomes,
             ],
+            linked_requirement_ids=linked_requirement_ids,
+            requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
+            source_signal_term_lookup=source_signal_term_lookup,
+            reportable_job_keywords=reportable_job_keywords,
         )
         highlighted_keywords = _filter_allowed_values(
             selection.highlighted_keywords,
-            _build_allowed_value_lookup(source_keyword_hits),
+            _build_allowed_value_lookup(source_reportable_candidates),
             limit=6,
         )
         bullet_points = _filter_grounded_generated_items(
@@ -1271,7 +1739,10 @@ def _build_ai_assisted_resume_draft(
         if not bullet_points or not source_highlights:
             bullet_points = _select_top_bullets(
                 [item for item in source_lines if item],
-                highlighted_keywords or source_keyword_hits or job_keywords,
+                highlighted_keywords
+                or source_highlighted_fallback
+                or source_reportable_candidates
+                or reportable_job_keywords,
                 fallback_limit=3,
             )
             source_highlights = source_highlights or _clean_string_list(bullet_points, limit=3)
@@ -1283,7 +1754,11 @@ def _build_ai_assisted_resume_draft(
                 project_name=source_entry.project_name,
                 role=source_entry.role,
                 bullet_points=bullet_points,
-                highlighted_keywords=highlighted_keywords or source_keyword_hits[:6],
+                highlighted_keywords=(
+                    highlighted_keywords
+                    or source_highlighted_fallback
+                    or source_reportable_candidates[:_MAX_HIGHLIGHTED_KEYWORDS]
+                ),
                 relevance_note=(selection.relevance_note or "").strip() or None,
                 source_highlights=source_highlights,
             )
@@ -1351,10 +1826,21 @@ def _build_ai_assisted_resume_draft(
         job_posting,
         selected_skills,
     )
+    fallback_fit_summary = _build_fit_summary(
+        candidate_profile,
+        match_result,
+        reportable_job_keywords,
+    )
+    aligned_interest_entries = _select_declared_interest_alignment(
+        candidate_profile,
+        reportable_job_keywords,
+    )
     summary_grounding_texts = [
         candidate_profile.professional_summary_base,
         *candidate_profile.target_roles,
+        *candidate_profile.interest_entries,
         *selected_skills,
+        *candidate_understanding_grounding_texts,
         *[
             highlight
             for experience_entry in selected_experience_entries
@@ -1389,12 +1875,19 @@ def _build_ai_assisted_resume_draft(
     fit_summary = (ai_output.fit_summary or "").strip()
     if fit_summary and not _is_grounded_generated_text(
         fit_summary,
-        source_texts=[match_result.final_summary, *selected_keywords, *selected_skills],
+        source_texts=[
+            match_result.final_summary,
+            fallback_fit_summary,
+            *aligned_interest_entries,
+            *candidate_understanding_grounding_texts,
+            *selected_keywords,
+            *selected_skills,
+        ],
         known_terms=[*candidate_known_terms, *reportable_job_keywords],
     ):
         fit_summary = ""
         used_guardrail_fit_summary_fallback = True
-    fit_summary = fit_summary or match_result.final_summary
+    fit_summary = fit_summary or fallback_fit_summary
 
     if not selected_experience_entries and not selected_project_entries:
         raise ResumeTailoringOpenAIError(
@@ -1461,6 +1954,11 @@ def generate_resume_artifacts(
     match_result: MatchResult | None,
 ) -> dict[str, object]:
     """Generate a truthful-first ResumeDraft and ChangeReport from saved inputs."""
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] = {}
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None
+    if _has_configured_openai_api_key():
+        requirement_priority_lookup = get_requirement_priority_lookup(job_posting)
+        candidate_profile_understanding = get_candidate_profile_understanding(candidate_profile)
     match_result_source = (
         ResumeMatchResultSource.PROVIDED
         if match_result is not None
@@ -1470,7 +1968,9 @@ def generate_resume_artifacts(
         MatchAnalysisRequest(
             candidate_profile=candidate_profile,
             job_posting=job_posting,
-        )
+        ),
+        requirement_priority_lookup=requirement_priority_lookup,
+        candidate_profile_understanding=candidate_profile_understanding,
     )
 
     generation_notes: list[str] = []
@@ -1481,12 +1981,15 @@ def generate_resume_artifacts(
             candidate_profile,
             job_posting,
             effective_match_result,
+            candidate_profile_understanding=candidate_profile_understanding,
         )
         resume_draft, ai_notes = _build_ai_assisted_resume_draft(
             candidate_profile,
             job_posting,
             effective_match_result,
             ai_output,
+            requirement_priority_lookup,
+            candidate_profile_understanding,
         )
         generation_mode = ResumeGenerationMode.OPENAI_STRUCTURED
         for note in ai_notes["generation_notes"]:
@@ -1505,6 +2008,7 @@ def generate_resume_artifacts(
             job_posting,
             effective_match_result,
             resume_draft,
+            requirement_priority_lookup,
             extra_warnings=[*ai_notes["warnings"], *generation_notes],
             extra_blocked_items=ai_notes["truthfulness_notes"],
             extra_omitted_items=ai_notes["omitted_or_deemphasized_items"],
@@ -1516,6 +2020,8 @@ def generate_resume_artifacts(
             candidate_profile,
             job_posting,
             effective_match_result,
+            requirement_priority_lookup,
+            candidate_profile_understanding,
         )
         generation_mode = ResumeGenerationMode.RULE_BASED_FALLBACK
         logger.warning(
@@ -1532,6 +2038,7 @@ def generate_resume_artifacts(
             job_posting,
             effective_match_result,
             resume_draft,
+            requirement_priority_lookup,
             extra_warnings=generation_notes,
         )
 

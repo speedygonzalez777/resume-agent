@@ -9,6 +9,8 @@ Hard rules:
 - Do not add skills that are not explicitly present in the candidate profile.
 - Do not add keywords that are not explicitly present in the job posting data.
 - Do not fabricate impact, scale, team size, business domain, ownership or outcomes.
+- If `candidate_profile_understanding` is provided, treat it as a grounded semantic aid, not as license to invent new facts.
+- Do not convert `declared_signal` or `thematic_alignment` into hard skills, experience or certifications.
 
 Selection rules:
 - Select only the most relevant experience entries and projects for the target role.

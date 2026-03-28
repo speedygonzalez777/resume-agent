@@ -14,6 +14,11 @@
     "Junior Robotics Engineer"
   ],
   "professional_summary_base": "Automation and robotics student with hands-on experience in industrial control, electrical systems, embedded projects and technical documentation.",
+  "soft_skill_entries": [
+    "communication",
+    "teamwork",
+    "problem solving"
+  ],
   "experience_entries": [
     {
       "id": "exp_001",
@@ -137,5 +142,10 @@
       "Do not exaggerate years of experience",
       "Do not add unsupported certificates"
     ]
-  }
+  },
+  "interest_entries": [
+    "artificial intelligence",
+    "industrial automation",
+    "psychology of learning"
+  ]
 }

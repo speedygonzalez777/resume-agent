@@ -317,12 +317,12 @@ export async function getMatchResultDetail(matchResultId) {
 }
 
 /**
- * Save a MatchResult through the backend persistence endpoint.
+ * Save one MatchResult as an archival snapshot tied to a profile and job pair.
  *
  * @param {object} matchResult MatchResult payload.
- * @param {number | null} candidateProfileId Selected stored profile ID.
- * @param {number | null} jobPostingId Selected stored job posting ID.
- * @returns {Promise<object>} Stored match result response from the backend.
+ * @param {number | null} candidateProfileId Stored candidate profile ID.
+ * @param {number | null} jobPostingId Stored job posting ID.
+ * @returns {Promise<object>} Stored match snapshot response.
  */
 export async function saveMatchResult(matchResult, candidateProfileId, jobPostingId) {
   const response = await fetch(buildApiUrl("/match/save"), {
@@ -332,8 +332,8 @@ export async function saveMatchResult(matchResult, candidateProfileId, jobPostin
     },
     body: JSON.stringify({
       match_result: matchResult,
-      candidate_profile_id: candidateProfileId,
-      job_posting_id: jobPostingId,
+      candidate_profile_id: candidateProfileId ?? null,
+      job_posting_id: jobPostingId ?? null,
     }),
   });
   return /** @type {Promise<object>} */ (readJson(response));

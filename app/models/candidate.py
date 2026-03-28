@@ -83,6 +83,8 @@ class CandidateProfile(BaseModel):
     personal_info: PersonalInfo
     target_roles: List[str] = Field(default_factory=list, description="Docelowe role zawodowe")
     professional_summary_base: str = Field(..., description="Bazowe podsumowanie zawodowe")
+    soft_skill_entries: List[str] = Field(default_factory=list, description="Jawnie wpisane umiejetnosci miekkie")
+    interest_entries: List[str] = Field(default_factory=list, description="Jawnie wpisane obszary zainteresowan")
     experience_entries: List[ExperienceEntry] = Field(default_factory=list)
     project_entries: List[ProjectEntry] = Field(default_factory=list)
     skill_entries: List[SkillEntry] = Field(default_factory=list)

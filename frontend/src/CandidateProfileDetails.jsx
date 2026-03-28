@@ -68,6 +68,8 @@ export default function CandidateProfileDetails({ profile }) {
   const experienceEntries = Array.isArray(profile?.experience_entries) ? profile.experience_entries : [];
   const projectEntries = Array.isArray(profile?.project_entries) ? profile.project_entries : [];
   const skillEntries = Array.isArray(profile?.skill_entries) ? profile.skill_entries : [];
+  const softSkillEntries = Array.isArray(profile?.soft_skill_entries) ? profile.soft_skill_entries : [];
+  const interestEntries = Array.isArray(profile?.interest_entries) ? profile.interest_entries : [];
   const educationEntries = Array.isArray(profile?.education_entries) ? profile.education_entries : [];
   const languageEntries = Array.isArray(profile?.language_entries) ? profile.language_entries : [];
   const certificateEntries = Array.isArray(profile?.certificate_entries) ? profile.certificate_entries : [];
@@ -240,6 +242,12 @@ export default function CandidateProfileDetails({ profile }) {
           ) : (
             <p className="placeholder">Brak zapisanych umiejetnosci.</p>
           )}
+
+          <h4>Soft skills</h4>
+          <ChipList items={softSkillEntries} emptyLabel="Brak zapisanych soft skills." />
+
+          <h4>Obszary zainteresowań</h4>
+          <ChipList items={interestEntries} emptyLabel="Brak zapisanych obszarów zainteresowań." />
         </section>
 
         <section className="detail-section">
