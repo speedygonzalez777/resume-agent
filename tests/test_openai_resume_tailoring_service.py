@@ -161,6 +161,44 @@ def test_generate_resume_tailoring_with_openai_fails_cleanly_when_structured_out
     assert exc_info.value.fallback_reason is ResumeFallbackReason.INVALID_AI_OUTPUT
 
 
+def test_generate_resume_tailoring_with_openai_uses_curated_offer_semantics_payload(
+    monkeypatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+    expected_output = _build_tailoring_output()
+    request = _load_request()
+    match_result = analyze_match_basic(request)
+
+    class FakeOpenAI:
+        def __init__(self, api_key: str) -> None:
+            self.responses = self
+
+        def parse(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return type("FakeResponse", (), {"output_parsed": expected_output})()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setattr("app.services.openai_resume_tailoring_service.OpenAI", FakeOpenAI)
+
+    result = generate_resume_tailoring_with_openai(
+        request.candidate_profile,
+        request.job_posting,
+        match_result,
+        reportable_offer_terms=["PLC", "automation", "commissioning"],
+        requirement_reportable_terms_lookup={
+            "req_001": ["PLC", "automation"],
+            "req_002": ["English", "communication"],
+        },
+    )
+
+    assert result == expected_output
+    payload = str(captured_kwargs["input"])
+    assert '"offer_semantics"' in payload
+    assert '"reportable_offer_terms"' in payload
+    assert '"extracted_keywords"' not in payload
+    assert '"keywords"' not in payload
+
+
 def _load_request() -> MatchAnalysisRequest:
     payload = json.loads(_MATCH_PAYLOAD_FIXTURE.read_text(encoding="utf-8"))
     return MatchAnalysisRequest.model_validate(payload)

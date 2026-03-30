@@ -140,6 +140,8 @@ def generate_resume_tailoring_with_openai(
     match_result: MatchResult,
     *,
     candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
+    reportable_offer_terms: list[str] | None = None,
+    requirement_reportable_terms_lookup: dict[str, list[str]] | None = None,
 ) -> OpenAIResumeTailoringOutput:
     """Generate structured, truthful-first resume tailoring hints with OpenAI."""
 
@@ -161,6 +163,8 @@ def generate_resume_tailoring_with_openai(
                 match_result,
                 model_name,
                 candidate_profile_understanding,
+                reportable_offer_terms,
+                requirement_reportable_terms_lookup,
             )
         )
     except ResumeTailoringOpenAIError:
@@ -195,6 +199,8 @@ def _build_responses_parse_kwargs(
     match_result: MatchResult,
     model_name: str,
     candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
+    reportable_offer_terms: list[str] | None = None,
+    requirement_reportable_terms_lookup: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI Responses API payload for structured resume tailoring."""
 
@@ -206,6 +212,8 @@ def _build_responses_parse_kwargs(
             job_posting,
             match_result,
             candidate_profile_understanding,
+            reportable_offer_terms,
+            requirement_reportable_terms_lookup,
         ),
         "text_format": OpenAIResumeTailoringOutput,
     }
@@ -218,6 +226,8 @@ def _build_resume_tailoring_input(
     job_posting: JobPosting,
     match_result: MatchResult,
     candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
+    reportable_offer_terms: list[str] | None = None,
+    requirement_reportable_terms_lookup: dict[str, list[str]] | None = None,
 ) -> str:
     """Build a compact but traceable evidence pack sent to the model."""
 
@@ -233,7 +243,6 @@ def _build_resume_tailoring_input(
             "responsibilities": entry.responsibilities,
             "achievements": entry.achievements,
             "technologies_used": entry.technologies_used,
-            "keywords": entry.keywords,
         }
         for entry in candidate_profile.experience_entries
     ]
@@ -245,7 +254,6 @@ def _build_resume_tailoring_input(
             "description": entry.description,
             "technologies_used": entry.technologies_used,
             "outcomes": entry.outcomes,
-            "keywords": entry.keywords,
             "link": str(entry.link) if entry.link else None,
         }
         for entry in candidate_profile.project_entries
@@ -277,12 +285,35 @@ def _build_resume_tailoring_input(
         }
         for entry in candidate_profile.certificate_entries
     ]
+    curated_job_posting = {
+        "title": job_posting.title,
+        "company_name": job_posting.company_name,
+        "location": job_posting.location,
+        "work_mode": job_posting.work_mode,
+        "employment_type": job_posting.employment_type,
+        "seniority_level": job_posting.seniority_level,
+        "role_summary": job_posting.role_summary,
+        "responsibilities": job_posting.responsibilities,
+        "requirements": [
+            {
+                "id": requirement.id,
+                "text": requirement.text,
+                "category": requirement.category,
+                "requirement_type": requirement.requirement_type,
+                "importance": requirement.importance,
+            }
+            for requirement in job_posting.requirements
+        ],
+        "language_of_offer": job_posting.language_of_offer,
+    }
 
     evidence_pack = {
         "candidate_profile": {
             "personal_info": candidate_profile.personal_info.model_dump(mode="json"),
             "target_roles": candidate_profile.target_roles,
             "professional_summary_base": candidate_profile.professional_summary_base,
+            "soft_skill_entries": candidate_profile.soft_skill_entries,
+            "interest_entries": candidate_profile.interest_entries,
             "experience_entries": experience_options,
             "project_entries": project_options,
             "skill_entries": [entry.model_dump(mode="json") for entry in candidate_profile.skill_entries],
@@ -291,7 +322,11 @@ def _build_resume_tailoring_input(
             "certificate_entries": certificate_options,
             "immutable_rules": candidate_profile.immutable_rules.model_dump(mode="json"),
         },
-        "job_posting": job_posting.model_dump(mode="json"),
+        "job_posting": curated_job_posting,
+        "offer_semantics": {
+            "reportable_offer_terms": reportable_offer_terms or [],
+            "requirement_reportable_terms_lookup": requirement_reportable_terms_lookup or {},
+        },
         "match_result": match_result.model_dump(mode="json"),
         "candidate_profile_understanding": (
             candidate_profile_understanding.model_dump(mode="json")

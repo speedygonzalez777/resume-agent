@@ -593,6 +593,47 @@ def test_generate_resume_artifacts_computes_candidate_understanding_once_and_reu
     assert captured_understanding_ids[0] == captured_understanding_ids[1] == id(understanding)
 
 
+def test_generate_resume_artifacts_reuses_supplied_semantic_context_without_recomputing(monkeypatch) -> None:
+    request = _load_request()
+    match_result = analyze_match_basic(request)
+    understanding = _build_candidate_profile_understanding()
+    priority_lookup = {
+        "req_001": _build_requirement_priority_item("req_001", "core"),
+        "req_002": _build_requirement_priority_item("req_002", "supporting"),
+    }
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.get_requirement_priority_lookup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("priority recompute should not happen")),
+    )
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.get_candidate_profile_understanding",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("profile understanding recompute should not happen")),
+    )
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.generate_resume_tailoring_with_openai",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ResumeTailoringOpenAIError(
+                "OpenAI resume tailoring failed. Falling back to deterministic resume generation.",
+                fallback_reason=ResumeFallbackReason.OPENAI_ERROR,
+            )
+        ),
+    )
+
+    artifacts = generate_resume_artifacts(
+        request.candidate_profile,
+        request.job_posting,
+        match_result,
+        requirement_priority_lookup=priority_lookup,
+        candidate_profile_understanding=understanding,
+    )
+    parsed_response = ResumeGenerationResponse.model_validate(artifacts)
+
+    assert parsed_response.generation_mode is ResumeGenerationMode.RULE_BASED_FALLBACK
+    assert parsed_response.change_report.detected_keywords
+
+
 def test_generate_resume_artifacts_falls_back_when_openai_errors(monkeypatch) -> None:
     request = _load_request()
     match_result = analyze_match_basic(request)

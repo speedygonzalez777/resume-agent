@@ -229,26 +229,81 @@ class OfferTermCandidate:
     requirement_id: str | None = None
 
 
+@dataclass(frozen=True)
+class ReportableOfferTermsContext:
+    """Canonical offer-side term context reused across downstream report/CV flows."""
+
+    reportable_terms: list[str]
+    requirement_terms_lookup: dict[str, list[str]]
+    top_level_terms: list[str]
+
+
 def build_reportable_offer_terms(
     job_posting: JobPosting,
     requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
 ) -> list[str]:
     """Build the final clean offer-side term layer used by report/explainability/CV."""
-
-    requirement_terms_lookup = build_requirement_reportable_terms_lookup(
+    return build_reportable_offer_terms_context(
         job_posting,
         requirement_priority_lookup=requirement_priority_lookup,
+    ).reportable_terms
+
+
+def build_requirement_reportable_terms_lookup(
+    job_posting: JobPosting,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+) -> dict[str, list[str]]:
+    """Build cleaned, requirement-level reportable terms for later grounded highlighting."""
+    return build_reportable_offer_terms_context(
+        job_posting,
+        requirement_priority_lookup=requirement_priority_lookup,
+    ).requirement_terms_lookup
+
+
+def build_reportable_offer_terms_context(
+    job_posting: JobPosting,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+) -> ReportableOfferTermsContext:
+    """Build one canonical offer-side term context for downstream report and CV flows."""
+
+    priority_lookup = requirement_priority_lookup or {}
+    top_level_terms = _build_top_level_reportable_terms(
+        job_posting,
+        priority_lookup,
     )
+    requirement_terms_lookup = _build_requirement_reportable_terms_lookup(
+        job_posting,
+        priority_lookup,
+        top_level_terms,
+    )
+
     reportable_terms: list[str] = []
+    for requirement in _get_ordered_requirements(job_posting, priority_lookup):
+        for term in requirement_terms_lookup.get(requirement.id, []):
+            _append_unique(reportable_terms, term)
+
+    for term in top_level_terms:
+        _append_unique(reportable_terms, term)
+
+    return ReportableOfferTermsContext(
+        reportable_terms=build_display_keywords(reportable_terms),
+        requirement_terms_lookup=requirement_terms_lookup,
+        top_level_terms=top_level_terms,
+    )
+
+
+def _build_top_level_reportable_terms(
+    job_posting: JobPosting,
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> list[str]:
+    """Treat parser-derived top-level keywords as the primary source of final offer terms."""
+
     blocked_terms = _build_blocked_reportable_terms(
         job_posting,
-        requirement_priority_lookup=requirement_priority_lookup,
+        priority_lookup,
+        top_level_terms=[],
     )
-
-    for requirement in _get_ordered_requirements(job_posting, requirement_priority_lookup or {}):
-        for term in requirement_terms_lookup.get(requirement.id, []):
-            if term not in reportable_terms:
-                reportable_terms.append(term)
+    top_level_terms: list[str] = []
 
     for raw_keyword in job_posting.keywords:
         candidate = parse_offer_term_candidate(
@@ -260,28 +315,30 @@ def build_reportable_offer_terms(
             candidate.primary_role == "reportable_term"
             and candidate.reportable_term
             and _ascii_key(candidate.reportable_term) not in blocked_terms
-            and candidate.reportable_term not in reportable_terms
         ):
-            reportable_terms.append(candidate.reportable_term)
+            _append_unique(top_level_terms, candidate.reportable_term)
 
-    return build_display_keywords(reportable_terms)
+    return build_display_keywords(top_level_terms)
 
 
-def build_requirement_reportable_terms_lookup(
+def _build_requirement_reportable_terms_lookup(
     job_posting: JobPosting,
-    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+    top_level_terms: list[str],
 ) -> dict[str, list[str]]:
-    """Build cleaned, requirement-level reportable terms for later grounded highlighting."""
+    """Build grounded requirement terms while keeping top-level parser keywords authoritative."""
 
-    priority_lookup = requirement_priority_lookup or {}
     terms_lookup: dict[str, list[str]] = {}
+    top_level_term_lookup = {_ascii_key(term): term for term in top_level_terms}
 
     for requirement in _get_ordered_requirements(job_posting, priority_lookup):
         if _should_skip_requirement_for_reportable_terms(requirement, priority_lookup):
             terms_lookup[requirement.id] = []
             continue
 
-        requirement_terms: list[str] = []
+        preferred_terms: list[str] = []
+        supplemental_terms: list[str] = []
+
         for raw_keyword in requirement.extracted_keywords:
             candidate = parse_offer_term_candidate(
                 raw_keyword,
@@ -289,19 +346,28 @@ def build_requirement_reportable_terms_lookup(
                 requirement=requirement,
                 job_posting=job_posting,
             )
+            if candidate.reportable_term is None:
+                continue
+
+            normalized_term = _ascii_key(candidate.reportable_term)
+            canonical_top_level_term = top_level_term_lookup.get(normalized_term)
+            if canonical_top_level_term is not None:
+                _append_unique(preferred_terms, canonical_top_level_term)
+                continue
+
             if (
                 candidate.primary_role in {"reportable_term", "matching_constraint", "modifier"}
-                and candidate.reportable_term
-                and candidate.reportable_term not in requirement_terms
+                and _should_allow_requirement_only_term(candidate.reportable_term, requirement)
             ):
-                requirement_terms.append(candidate.reportable_term)
+                _append_unique(supplemental_terms, candidate.reportable_term)
 
-        if not requirement_terms:
-            for fallback_term in _collect_requirement_text_fallback_terms(requirement, job_posting):
-                if fallback_term not in requirement_terms:
-                    requirement_terms.append(fallback_term)
+        if not preferred_terms:
+            for fallback_term in _collect_requirement_text_fallback_terms(requirement, top_level_terms):
+                _append_unique(preferred_terms, fallback_term)
 
-        terms_lookup[requirement.id] = build_display_keywords(requirement_terms)
+        terms_lookup[requirement.id] = build_display_keywords(
+            [*preferred_terms, *supplemental_terms]
+        )
 
     return terms_lookup
 
@@ -309,6 +375,8 @@ def build_requirement_reportable_terms_lookup(
 def _build_blocked_reportable_terms(
     job_posting: JobPosting,
     requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+    *,
+    top_level_terms: list[str],
 ) -> set[str]:
     """Collect reportable-looking terms that should stay excluded because their requirement is skipped."""
 
@@ -329,7 +397,7 @@ def _build_blocked_reportable_terms(
             if candidate.reportable_term:
                 blocked_terms.add(_ascii_key(candidate.reportable_term))
 
-        for fallback_term in _collect_requirement_text_fallback_terms(requirement, job_posting):
+        for fallback_term in _collect_requirement_text_fallback_terms(requirement, top_level_terms):
             blocked_terms.add(_ascii_key(fallback_term))
 
     return blocked_terms
@@ -519,7 +587,7 @@ def _extract_reportable_term(value: str) -> str | None:
 
 def _collect_requirement_text_fallback_terms(
     requirement: Requirement,
-    job_posting: JobPosting,
+    top_level_terms: list[str],
 ) -> list[str]:
     """Recover reportable terms from requirement text only through already-clean offer terms."""
     normalized_requirement_text = _ascii_key(requirement.text)
@@ -527,22 +595,50 @@ def _collect_requirement_text_fallback_terms(
         return []
 
     fallback_terms: list[str] = []
-    for raw_keyword in job_posting.keywords:
-        candidate = parse_offer_term_candidate(
-            raw_keyword,
-            source_kind="job_keyword",
-            job_posting=job_posting,
-        )
-        if candidate.primary_role != "reportable_term" or not candidate.reportable_term:
-            continue
-
-        normalized_term = _ascii_key(candidate.reportable_term)
+    for term in top_level_terms:
+        normalized_term = _ascii_key(term)
         if len(normalized_term) < 3:
             continue
         if normalized_term in normalized_requirement_text:
-            _append_unique(fallback_terms, candidate.reportable_term)
+            _append_unique(fallback_terms, term)
 
     return fallback_terms
+
+
+def _should_allow_requirement_only_term(term: str, requirement: Requirement) -> bool:
+    """Admit requirement-only terms conservatively so raw requirement fragments do not dominate."""
+
+    normalized_term = _ascii_key(term)
+    if not normalized_term:
+        return False
+
+    normalized_category = _ascii_key(requirement.category)
+
+    if _looks_like_threshold(term) or _looks_like_modifier(term):
+        return False
+
+    tokens = _tokenize(term)
+    normalized_tokens = [_ascii_key(token) for token in tokens]
+    if not _contains_meaningful_token(normalized_tokens):
+        return False
+
+    if len(tokens) == 1:
+        if any(character.isupper() for character in term):
+            return True
+        if any(symbol in term for symbol in "+/#.-"):
+            return True
+        return normalized_category in {"language", "education"}
+
+    if any(character.isupper() for character in term):
+        return True
+
+    if any(symbol in term for symbol in "+/#.-"):
+        return True
+
+    if normalized_category in {"language", "education"}:
+        return True
+
+    return False
 
 
 def _token_is_leading_noise(normalized_token: str) -> bool:

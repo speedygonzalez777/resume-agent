@@ -154,3 +154,40 @@ def test_build_reportable_offer_terms_separates_terms_from_modifiers_thresholds_
     assert requirement_terms["req_schedule"] == []
     assert requirement_terms["req_fast_paced"] == []
     assert reportable_terms == ["LangGraph", "Python", "PyTorch", "TensorFlow"]
+
+
+def test_build_reportable_offer_terms_treats_top_level_keywords_as_primary_truth() -> None:
+    job_posting = _build_job_posting()
+    job_posting.requirements = [
+        _build_requirement(
+            "req_model_serving",
+            "Integracja oraz serwowanie modeli w srodowisku produkcyjnym",
+            ["integracja", "serwowanie modeli", "LangGraph"],
+        ),
+    ]
+    job_posting.keywords = ["LangGraph", "Python"]
+
+    reportable_terms = build_reportable_offer_terms(job_posting)
+
+    assert reportable_terms == ["LangGraph", "Python"]
+
+
+def test_build_reportable_offer_terms_allows_requirement_only_concrete_single_term_when_missing_upstream() -> None:
+    job_posting = _build_job_posting()
+    job_posting.requirements = [
+        _build_requirement(
+            "req_english",
+            "English at communicative level",
+            ["English", "communication"],
+            category="language",
+            requirement_type="must_have",
+            importance="high",
+        ),
+    ]
+    job_posting.keywords = ["PLC"]
+
+    requirement_terms = build_requirement_reportable_terms_lookup(job_posting)
+    reportable_terms = build_reportable_offer_terms(job_posting)
+
+    assert requirement_terms["req_english"] == ["English", "communication"]
+    assert reportable_terms == ["English", "communication", "PLC"]
