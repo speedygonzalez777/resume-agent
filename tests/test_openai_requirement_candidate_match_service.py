@@ -52,6 +52,68 @@ def test_evaluate_requirement_candidate_block_with_openai_fails_cleanly_when_api
     assert exc_info.value.reason == "missing_api_key"
 
 
+def test_evaluate_requirement_candidate_block_with_openai_uses_matching_workflow_model(
+    monkeypatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+    request = _load_request()
+    request.job_posting.requirements = request.job_posting.requirements[:1]
+    request.job_posting.requirements[0].id = "req_openai"
+    request.job_posting.requirements[0].text = "Hands-on OpenAI integration experience"
+    request.job_posting.requirements[0].extracted_keywords = ["OpenAI"]
+    request.candidate_profile.project_entries[0].description = (
+        "Built an OpenAI API integration for an internal robotics assistant."
+    )
+
+    expected_output = OpenAIRequirementCandidateMatchRawOutput(
+        items=[
+            OpenAIRequirementCandidateMatchRawItem(
+                requirement_id="req_openai",
+                suggested_status="matched",
+                grounding_strength="strong",
+                reasoning_note="The project explicitly describes an OpenAI API integration.",
+                evidence_refs=[
+                    {
+                        "source_type": "project",
+                        "source_id": "proj_001",
+                        "supporting_snippet": "OpenAI API integration",
+                    }
+                ],
+                supporting_signal_labels=["OpenAI"],
+                missing_elements=[],
+            )
+        ]
+    )
+
+    class FakeOpenAI:
+        def __init__(self, api_key: str) -> None:
+            self.responses = self
+
+        def parse(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return type("FakeResponse", (), {"output_parsed": expected_output})()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setenv("OPENAI_MATCHING_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENAI_REQUIREMENT_CANDIDATE_MATCH_MODEL", "gpt-5-mini")
+    monkeypatch.setattr(
+        "app.services.openai_requirement_candidate_match_service.OpenAI",
+        FakeOpenAI,
+    )
+
+    output = evaluate_requirement_candidate_block_with_openai(
+        request,
+        target_requirements=request.job_posting.requirements,
+        requirement_groups={"req_openai": "technical_skill"},
+        deterministic_match_lookup=_build_deterministic_lookup(["req_openai"]),
+        requirement_priority_lookup={},
+        candidate_profile_understanding=CandidateProfileUnderstanding(),
+    )
+
+    assert captured_kwargs["model"] == "gpt-5.4"
+    assert output.items[0].requirement_id == "req_openai"
+
+
 def test_evaluate_requirement_candidate_block_with_openai_builds_validated_semantic_items(
     monkeypatch,
 ) -> None:

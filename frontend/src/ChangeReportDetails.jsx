@@ -2,6 +2,8 @@
  * Structured presentation of a ChangeReport together with the fit data used for generation.
  */
 
+import RawJsonPanel from "./RawJsonPanel";
+
 /**
  * Format a fractional score into a compact percentage-like label.
  *
@@ -363,10 +365,7 @@ export default function ChangeReportDetails({
         {renderStringList(warnings, "Brak dodatkowych ostrzezen dla tego draftu.")}
       </section>
 
-      <details className="raw-json-toggle">
-        <summary>Raw JSON ChangeReport</summary>
-        <pre>{JSON.stringify(changeReport, null, 2)}</pre>
-      </details>
+      <RawJsonPanel summary="Raw JSON ChangeReport" value={changeReport} />
     </div>
   );
 }

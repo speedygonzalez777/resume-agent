@@ -91,12 +91,12 @@ def test_generate_resume_artifacts_falls_back_when_openai_is_unavailable(monkeyp
     assert parsed_response.fallback_reason is ResumeFallbackReason.MISSING_API_KEY
     assert parsed_response.generation_notes
     assert resume_draft.header.full_name == request.candidate_profile.personal_info.full_name
-    assert resume_draft.header.professional_headline == request.job_posting.title
+    assert resume_draft.header.professional_headline is None
     assert resume_draft.target_job_title == request.job_posting.title
     assert resume_draft.target_company_name == request.job_posting.company_name
-    assert "Most relevant for the" in (resume_draft.professional_summary or "")
+    assert resume_draft.professional_summary == request.candidate_profile.professional_summary_base
     assert "PLC" in resume_draft.selected_skills
-    assert "TIA Portal" in resume_draft.selected_skills
+    assert "TIA Portal" not in resume_draft.selected_skills
     assert [entry.source_experience_id for entry in resume_draft.selected_experience_entries] == ["exp_001"]
     assert resume_draft.selected_education_entries
     assert resume_draft.selected_language_entries
@@ -108,6 +108,9 @@ def test_generate_resume_artifacts_falls_back_when_openai_is_unavailable(monkeyp
         in change_report.blocked_items
     )
     assert any("falling back to deterministic resume generation" in item.lower() for item in change_report.warnings)
+    assert parsed_response.generation_debug is not None
+    assert parsed_response.generation_debug["selected_skills"][0]["label"] == "PLC"
+    assert parsed_response.generation_debug["professional_summary"]["summary_focus_terms"] == ["PLC"]
     assert sorted(change_report.detected_keywords) == sorted(
         [
             "PLC",
@@ -174,12 +177,12 @@ def test_generate_resume_artifacts_uses_ai_output_when_available_with_conservati
         resume_draft.professional_summary
         == (
             "Automation and robotics student with hands-on experience in industrial control, "
-            "electrical systems, embedded projects and technical documentation. "
-            "Most relevant for the Junior Automation Engineer role: PLC, TIA Portal."
+            "electrical systems, embedded projects and technical documentation."
         )
     )
-    assert resume_draft.selected_skills == ["PLC", "TIA Portal"]
-    assert resume_draft.selected_keywords == ["PLC", "commissioning"]
+    assert resume_draft.header.professional_headline is None
+    assert resume_draft.selected_skills == ["PLC"]
+    assert resume_draft.selected_keywords == ["PLC"]
     assert resume_draft.selected_experience_entries[0].source_experience_id == "exp_001"
     assert resume_draft.selected_experience_entries[0].source_highlights == [
         "Assisted in PLC-related automation tasks",
@@ -189,6 +192,8 @@ def test_generate_resume_artifacts_uses_ai_output_when_available_with_conservati
     ]
     assert any("safer grounded summary" in note for note in parsed_response.generation_notes)
     assert any("source-grounded fallback content" in note for note in parsed_response.generation_notes)
+    assert parsed_response.generation_debug is not None
+    assert parsed_response.generation_debug["professional_summary"]["summary_focus_terms"] == ["PLC"]
     assert "Unverified technologies were omitted instead of guessed." in change_report.blocked_items
     assert "Deemphasized less relevant profile sections with weak keyword overlap." in change_report.omitted_elements
     assert sorted(change_report.detected_keywords) == sorted(
@@ -256,6 +261,70 @@ def test_generate_resume_artifacts_uses_interest_entries_as_summary_grounding_co
 
 
 
+def test_generate_resume_artifacts_carries_soft_skills_interests_and_project_link_into_resume_draft(
+    monkeypatch,
+) -> None:
+    request = _load_request()
+    request.candidate_profile.soft_skill_entries = ["communication", "teamwork"]
+    request.candidate_profile.interest_entries = ["industrial automation", "robotics"]
+    match_result = analyze_match_basic(request)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.get_requirement_priority_lookup",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.get_candidate_profile_understanding",
+        lambda *_args, **_kwargs: CandidateProfileUnderstanding(),
+    )
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.generate_resume_tailoring_with_openai",
+        lambda *_args, **_kwargs: OpenAIResumeTailoringOutput(
+            fit_summary="Strong fit for PLC-oriented automation work.",
+            professional_summary="Automation and robotics student with grounded PLC exposure.",
+            selected_skills=["PLC"],
+            selected_keywords=["PLC"],
+            selected_experience_entries=[],
+            selected_project_entries=[
+                {
+                    "source_project_id": "proj_001",
+                    "tailored_bullets": [
+                        "Built a functional robotic prototype",
+                    ],
+                    "highlighted_keywords": ["PLC"],
+                    "relevance_note": "Project supports automation and robotics profile.",
+                    "source_highlights": [
+                        "Built a functional robotic prototype",
+                    ],
+                }
+            ],
+            selected_education_entries=[],
+            selected_language_entries=[],
+            selected_certificate_entries=[],
+            warnings=[],
+            truthfulness_notes=[],
+            omitted_or_deemphasized_items=[],
+        ),
+    )
+
+    artifacts = generate_resume_artifacts(
+        request.candidate_profile,
+        request.job_posting,
+        match_result,
+    )
+    parsed_response = ResumeGenerationResponse.model_validate(artifacts)
+
+    assert parsed_response.resume_draft.selected_soft_skill_entries == ["communication", "teamwork"]
+    assert parsed_response.resume_draft.selected_interest_entries == ["industrial automation", "robotics"]
+    assert len(parsed_response.resume_draft.selected_project_entries) == 1
+    assert parsed_response.resume_draft.selected_project_entries[0].source_project_id == "proj_001"
+    assert (
+        parsed_response.resume_draft.selected_project_entries[0].link
+        == "https://github.com/filipkoleda/hexapod"
+    )
+
+
 def test_generate_resume_artifacts_adds_declared_interest_note_to_fallback_fit_summary(monkeypatch) -> None:
     request = _load_request()
     request.candidate_profile.interest_entries = ["industrial automation", "human-centered design"]
@@ -271,6 +340,113 @@ def test_generate_resume_artifacts_adds_declared_interest_note_to_fallback_fit_s
 
     assert "Declared interest alignment: industrial automation." in parsed_response.resume_draft.fit_summary
     assert "industrial automation" not in parsed_response.resume_draft.selected_skills
+
+
+def test_resume_generation_response_accepts_legacy_resume_draft_without_new_fields() -> None:
+    legacy_response = ResumeGenerationResponse.model_validate(
+        {
+            "resume_draft": {
+                "header": {
+                    "full_name": "Jan Kowalski",
+                    "professional_headline": None,
+                    "email": "jan@example.com",
+                    "phone": "+48 555 111 222",
+                    "location": "Krakow",
+                    "links": ["https://linkedin.com/in/jankowalski"],
+                },
+                "target_job_title": "Automation Engineer",
+                "target_company_name": "Example Automation",
+                "fit_summary": "Strong fit for PLC-heavy automation role.",
+                "professional_summary": "Automation engineer focused on PLC commissioning.",
+                "selected_skills": ["PLC"],
+                "selected_experience_entries": [],
+                "selected_project_entries": [
+                    {
+                        "source_project_id": "proj_001",
+                        "project_name": "Hexapod Robot",
+                        "role": "Designer and developer",
+                        "bullet_points": ["Built a functional robotic prototype"],
+                        "highlighted_keywords": ["PLC"],
+                        "relevance_note": None,
+                        "source_highlights": ["Built a functional robotic prototype"],
+                    }
+                ],
+                "selected_education_entries": [],
+                "selected_language_entries": [],
+                "selected_certificate_entries": [],
+                "selected_keywords": ["PLC"],
+                "keyword_usage": ["PLC"],
+            },
+            "change_report": {
+                "added_elements": [],
+                "emphasized_elements": [],
+                "omitted_elements": [],
+                "omission_reasons": [],
+                "detected_keywords": ["PLC"],
+                "used_keywords": ["PLC"],
+                "unused_keywords": [],
+                "blocked_items": [],
+                "warnings": [],
+            },
+            "generation_mode": "rule_based_fallback",
+            "match_result_source": "provided",
+            "fallback_reason": None,
+            "generation_notes": [],
+            "offer_signal_debug": None,
+            "generation_debug": None,
+            "resume_draft_record_id": None,
+            "resume_draft_saved_at": None,
+            "persistence_warning": None,
+        }
+    )
+
+    assert legacy_response.resume_draft.selected_soft_skill_entries == []
+    assert legacy_response.resume_draft.selected_interest_entries == []
+    assert legacy_response.resume_draft.selected_project_entries[0].link is None
+
+
+def test_generate_resume_artifacts_exposes_offer_signal_debug_breakdown(monkeypatch) -> None:
+    request = _load_request()
+    request.job_posting.keywords = [
+        "Python",
+        "Java",
+        "SQL",
+        "studia",
+        "kierunki techniczne",
+        "30 godzin tygodniowo",
+        "6 miesięcy",
+        "hybrydowa",
+        "umowa zlecenie",
+        "staż",
+        "znajomość",
+    ]
+    match_result = analyze_match_basic(request)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    artifacts = generate_resume_artifacts(
+        request.candidate_profile,
+        request.job_posting,
+        match_result,
+    )
+    parsed_response = ResumeGenerationResponse.model_validate(artifacts)
+
+    debug_breakdown = parsed_response.offer_signal_debug
+
+    assert debug_breakdown is not None
+    assert {"Python", "Java", "SQL"} <= set(debug_breakdown["generation_eligible_offer_terms"])
+    assert "studia" not in debug_breakdown["generation_eligible_offer_terms"]
+    assert "30 godzin tygodniowo" not in debug_breakdown["generation_eligible_offer_terms"]
+    assert "Internship" not in debug_breakdown["generation_eligible_offer_terms"]
+    assert {item["normalized_label"] for item in debug_breakdown["manual_confirmation_items"]} == {
+        "30 godzin tygodniowo",
+        "6 miesiecy",
+    }
+    assert {item["normalized_label"] for item in debug_breakdown["role_alignment_signals"]} == {
+        "internship",
+    }
+    assert {item["normalized_label"] for item in debug_breakdown["suppressed_terms"]} == {
+        "znajomosc",
+    }
 
 
 def test_generate_resume_artifacts_filters_noisy_detected_and_highlighted_keywords(monkeypatch) -> None:
@@ -632,6 +808,58 @@ def test_generate_resume_artifacts_reuses_supplied_semantic_context_without_reco
 
     assert parsed_response.generation_mode is ResumeGenerationMode.RULE_BASED_FALLBACK
     assert parsed_response.change_report.detected_keywords
+
+
+def test_generate_resume_artifacts_reuses_matching_handoff_without_recomputing(monkeypatch) -> None:
+    request = _load_request()
+    match_result = analyze_match_basic(request)
+    understanding = _build_candidate_profile_understanding()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.get_requirement_priority_lookup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("priority recompute should not happen")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.get_candidate_profile_understanding",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("profile understanding recompute should not happen")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.resume_generation_service.generate_resume_tailoring_with_openai",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ResumeTailoringOpenAIError(
+                "OpenAI resume tailoring failed. Falling back to deterministic resume generation.",
+                fallback_reason=ResumeFallbackReason.OPENAI_ERROR,
+            )
+        ),
+    )
+
+    artifacts = generate_resume_artifacts(
+        request.candidate_profile,
+        request.job_posting,
+        match_result,
+        requirement_priority_lookup={},
+        candidate_profile_understanding=understanding,
+        requirement_priority_lookup_provided=True,
+        candidate_profile_understanding_provided=True,
+        matching_handoff_supplied=True,
+    )
+    parsed_response = ResumeGenerationResponse.model_validate(artifacts)
+
+    assert parsed_response.generation_mode is ResumeGenerationMode.RULE_BASED_FALLBACK
+    assert parsed_response.generation_debug is not None
+    assert parsed_response.generation_debug["semantic_handoff"] == {
+        "matching_handoff_supplied": True,
+        "reused_sidecars": [
+            "requirement_priority_lookup",
+            "candidate_profile_understanding",
+        ],
+        "locally_computed_sidecars": [],
+    }
 
 
 def test_generate_resume_artifacts_falls_back_when_openai_errors(monkeypatch) -> None:

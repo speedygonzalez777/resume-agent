@@ -23,6 +23,8 @@ function normalizeListItem(value) {
  *   onChange: (items: string[]) => void,
  *   placeholder?: string,
  *   addLabel?: string,
+ *   helperText?: string,
+ *   emptyText?: string,
  * }} props Component props.
  * @returns {JSX.Element} Tag-list editor.
  */
@@ -32,6 +34,8 @@ export default function TagListInput({
   onChange,
   placeholder = "Dodaj wartosc",
   addLabel = "Dodaj",
+  helperText = "",
+  emptyText = "Brak dodanych pozycji.",
 }) {
   const [draftValue, setDraftValue] = useState("");
 
@@ -81,6 +85,7 @@ export default function TagListInput({
   return (
     <div className="field tag-list-field">
       <span>{label}</span>
+      {helperText ? <p className="helper-text">{helperText}</p> : null}
 
       <div className="tag-input-row">
         <input
@@ -113,7 +118,7 @@ export default function TagListInput({
           ))}
         </div>
       ) : (
-        <p className="helper-text">Brak dodanych pozycji.</p>
+        <p className="helper-text">{emptyText}</p>
       )}
     </div>
   );

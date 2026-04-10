@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 
+import RawJsonPanel from "./RawJsonPanel";
 import TagListInput from "./TagListInput";
 
 const UI_ENTRY_ID_FIELD = "__ui_id";
@@ -1880,10 +1881,11 @@ export default function CandidateProfileForm({
         </div>
       </FormSection>
 
-      <details className="raw-json-toggle profile-json-preview">
-        <summary>Podglad danych technicznych</summary>
-        <pre>{JSON.stringify(profilePreview, null, 2)}</pre>
-      </details>
+      <RawJsonPanel
+        className="raw-json-toggle profile-json-preview"
+        summary="Podglad danych technicznych"
+        value={profilePreview}
+      />
 
       <div className="actions section-actions-bottom">
         {isEditMode ? (

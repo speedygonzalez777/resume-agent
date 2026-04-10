@@ -295,6 +295,28 @@ export async function analyzeMatch(candidateProfile, jobPosting) {
 }
 
 /**
+ * Run debug matching analysis for one selected profile and one selected job posting.
+ *
+ * @param {object} candidateProfile CandidateProfile payload.
+ * @param {object} jobPosting JobPosting payload.
+ * @returns {Promise<{match_result: object, matching_debug: object, matching_handoff: object}>}
+ * Debug match payload returned by the backend.
+ */
+export async function analyzeMatchDebug(candidateProfile, jobPosting) {
+  const response = await fetch(buildApiUrl("/match/analyze-debug"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      candidate_profile: candidateProfile,
+      job_posting: jobPosting,
+    }),
+  });
+  return /** @type {Promise<{match_result: object, matching_debug: object, matching_handoff: object}>} */ (readJson(response));
+}
+
+/**
  * Load the stored match-result history from the backend.
  *
  * @param {number} [limit=50] Maximum number of records to fetch.
@@ -344,17 +366,34 @@ export async function saveMatchResult(matchResult, candidateProfileId, jobPostin
  *
  * @param {object} candidateProfile CandidateProfile payload.
  * @param {object} jobPosting JobPosting payload.
- * @param {object} matchResult MatchResult payload.
+ * @param {object | null | undefined} matchResult MatchResult payload.
+ * @param {object | null | undefined} matchingHandoff Optional matching sidecars reused by generation.
+ * @param {number | null | undefined} candidateProfileId Stored candidate profile ID used for persistence links.
+ * @param {number | null | undefined} jobPostingId Stored job posting ID used for persistence links.
+ * @param {number | null | undefined} matchResultId Stored match-result snapshot ID used for persistence links.
  * @returns {Promise<{
  *   resume_draft: object,
  *   change_report: object,
  *   generation_mode: string,
  *   match_result_source: string,
  *   fallback_reason: string | null,
- *   generation_notes: string[]
+ *   generation_notes: string[],
+ *   offer_signal_debug: object | null,
+ *   generation_debug: object | null,
+ *   resume_draft_record_id: number | null,
+ *   resume_draft_saved_at: string | null,
+ *   persistence_warning: string | null
  * }>} Generated draft artifacts together with generation metadata.
  */
-export async function generateResumeDraft(candidateProfile, jobPosting, matchResult) {
+export async function generateResumeDraft(
+  candidateProfile,
+  jobPosting,
+  matchResult,
+  matchingHandoff,
+  candidateProfileId,
+  jobPostingId,
+  matchResultId,
+) {
   const response = await fetch(buildApiUrl("/resume/generate"), {
     method: "POST",
     headers: {
@@ -363,8 +402,98 @@ export async function generateResumeDraft(candidateProfile, jobPosting, matchRes
     body: JSON.stringify({
       candidate_profile: candidateProfile,
       job_posting: jobPosting,
-      match_result: matchResult,
+      match_result: matchResult ?? null,
+      matching_handoff: matchingHandoff ?? null,
+      candidate_profile_id: candidateProfileId ?? null,
+      job_posting_id: jobPostingId ?? null,
+      match_result_id: matchResultId ?? null,
     }),
   });
-  return /** @type {Promise<{resume_draft: object, change_report: object, generation_mode: string, match_result_source: string, fallback_reason: string | null, generation_notes: string[]}>} */ (readJson(response));
+  return /** @type {Promise<{resume_draft: object, change_report: object, generation_mode: string, match_result_source: string, fallback_reason: string | null, generation_notes: string[], offer_signal_debug: object | null, generation_debug: object | null, resume_draft_record_id: number | null, resume_draft_saved_at: string | null, persistence_warning: string | null}>} */ (readJson(response));
+}
+
+/**
+ * Apply optional AI refinement to an already generated ResumeDraft.
+ *
+ * @param {object} resumeDraft Existing ResumeDraft payload.
+ * @param {{
+ *   must_include_terms: string[],
+ *   avoid_or_deemphasize_terms: string[],
+ *   forbidden_claims_or_phrases: string[],
+ *   skills_allowlist: string[],
+ *   additional_instructions?: string | null
+ * }} guidance Optional user guidance for the refinement step.
+ * @param {number | null | undefined} resumeDraftRecordId Stored resume-draft record ID used for persistence update.
+ * @returns {Promise<{
+ *   refined_resume_draft: object,
+ *   refinement_patch: object,
+ *   resume_draft_record_id: number | null,
+ *   resume_draft_updated_at: string | null,
+ *   persistence_warning: string | null
+ * }>} Refined draft together with the structured patch returned by the model.
+ */
+export async function refineResumeDraft(resumeDraft, guidance, resumeDraftRecordId) {
+  const response = await fetch(buildApiUrl("/resume/refine-draft"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      resume_draft: resumeDraft,
+      guidance,
+      resume_draft_record_id: resumeDraftRecordId ?? null,
+    }),
+  });
+  return /** @type {Promise<{refined_resume_draft: object, refinement_patch: object, resume_draft_record_id: number | null, resume_draft_updated_at: string | null, persistence_warning: string | null}>} */ (readJson(response));
+}
+
+/**
+ * Load stored resume-draft history from the backend, optionally filtered by one profile-offer pair.
+ *
+ * @param {number} [limit=50] Maximum number of records to fetch.
+ * @param {number | null | undefined} candidateProfileId Optional stored profile ID filter.
+ * @param {number | null | undefined} jobPostingId Optional stored job ID filter.
+ * @returns {Promise<object[]>} Stored resume-draft list items.
+ */
+export async function listResumeDrafts(limit = 50, candidateProfileId, jobPostingId) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (candidateProfileId != null) {
+    params.set("candidate_profile_id", String(candidateProfileId));
+  }
+  if (jobPostingId != null) {
+    params.set("job_posting_id", String(jobPostingId));
+  }
+
+  const response = await fetch(buildApiUrl(`/resume/drafts?${params.toString()}`));
+  return /** @type {Promise<object[]>} */ (readJson(response));
+}
+
+/**
+ * Load one stored resume-draft record together with its base and refined artifacts.
+ *
+ * @param {number} draftId Database identifier of the stored resume draft.
+ * @returns {Promise<{
+ *   id: number,
+ *   saved_at: string,
+ *   updated_at: string,
+ *   candidate_profile_id: number | null,
+ *   job_posting_id: number | null,
+ *   match_result_id: number | null,
+ *   target_job_title: string | null,
+ *   target_company_name: string | null,
+ *   generation_mode: string,
+ *   has_refined_version: boolean,
+ *   base_resume_artifacts: object,
+ *   resume_debug_envelope: {
+ *     matching_handoff: boolean | null,
+ *     request_body: object | null,
+ *     response_body: object | null,
+ *     request_body_unavailable_reason: string | null,
+ *   },
+ *   refined_resume_artifacts: object | null,
+ * }>} Stored resume-draft detail response.
+ */
+export async function getResumeDraftDetail(draftId) {
+  const response = await fetch(buildApiUrl(`/resume/drafts/${draftId}`));
+  return /** @type {Promise<object>} */ (readJson(response));
 }

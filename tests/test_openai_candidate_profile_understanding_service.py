@@ -31,6 +31,55 @@ def test_evaluate_candidate_profile_understanding_with_openai_fails_cleanly_when
     assert exc_info.value.reason == "missing_api_key"
 
 
+def test_evaluate_candidate_profile_understanding_with_openai_uses_matching_workflow_model(
+    monkeypatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+    request = _load_request()
+    expected_output = OpenAICandidateProfileUnderstandingRawOutput(
+        source_signals=[],
+        language_normalizations=[
+            OpenAICandidateLanguageNormalization(
+                source_id="language_001",
+                normalized_cefr=None,
+                semantic_descriptors=["fluent", "written", "spoken"],
+                confidence="high",
+                reasoning_note="Grounded normalization for Polish.",
+            ),
+            OpenAICandidateLanguageNormalization(
+                source_id="language_002",
+                normalized_cefr="b2",
+                semantic_descriptors=["written", "spoken", "business_working"],
+                confidence="high",
+                reasoning_note="Grounded normalization for English.",
+            ),
+        ],
+        thematic_alignments=[],
+        warnings=[],
+    )
+
+    class FakeOpenAI:
+        def __init__(self, api_key: str) -> None:
+            self.responses = self
+
+        def parse(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return type("FakeResponse", (), {"output_parsed": expected_output})()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setenv("OPENAI_MATCHING_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENAI_CANDIDATE_PROFILE_UNDERSTANDING_MODEL", "gpt-5-mini")
+    monkeypatch.setattr(
+        "app.services.openai_candidate_profile_understanding_service.OpenAI",
+        FakeOpenAI,
+    )
+
+    result = evaluate_candidate_profile_understanding_with_openai(request.candidate_profile)
+
+    assert captured_kwargs["model"] == "gpt-5.4"
+    assert len(result.language_normalizations) == 2
+
+
 def test_evaluate_candidate_profile_understanding_with_openai_builds_canonical_profile_signals(
     monkeypatch,
 ) -> None:

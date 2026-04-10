@@ -69,6 +69,10 @@ class ResumeProjectEntry(BaseModel):
     )
     project_name: str = Field(..., description="Nazwa projektu")
     role: str = Field(..., description="Rola w projekcie")
+    link: Optional[str] = Field(
+        default=None,
+        description="Opcjonalny link do projektu"
+    )
     bullet_points: List[str] = Field(
         default_factory=list,
         description="Opis projektu dopasowany do oferty"
@@ -148,6 +152,14 @@ class ResumeDraft(BaseModel):
         default_factory=list,
         description="Wybrane umiejętności do CV"
     )
+    selected_soft_skill_entries: List[str] = Field(
+        default_factory=list,
+        description="Jawnie wpisane soft skills przeniesione do draftu CV"
+    )
+    selected_interest_entries: List[str] = Field(
+        default_factory=list,
+        description="Jawnie wpisane obszary zainteresowań przeniesione do draftu CV"
+    )
     selected_experience_entries: List[ResumeExperienceEntry] = Field(
         default_factory=list,
         description="Doświadczenia zawodowe wybrane do CV"
@@ -175,4 +187,95 @@ class ResumeDraft(BaseModel):
     keyword_usage: List[str] = Field(
         default_factory=list,
         description="Lista słów kluczowych użytych w CV"
+    )
+
+
+class ResumeDraftRefinementGuidance(BaseModel):
+    must_include_terms: List[str] = Field(
+        default_factory=list,
+        description="Terminy, ktore model powinien wyeksponowac w poprawionym drafcie, jesli sa juz uczciwie pokryte w bazowym resume_draft"
+    )
+    avoid_or_deemphasize_terms: List[str] = Field(
+        default_factory=list,
+        description="Terminy, ktorych nie nalezy promowac w poprawionym drafcie CV"
+    )
+    forbidden_claims_or_phrases: List[str] = Field(
+        default_factory=list,
+        description="Frazy i twierdzenia, ktore nie moga pojawic sie w poprawionym drafcie CV"
+    )
+    skills_allowlist: List[str] = Field(
+        default_factory=list,
+        description="Allowlista dla selected_skills; pusta lista oznacza brak ograniczenia"
+    )
+    additional_instructions: Optional[str] = Field(
+        default=None,
+        description="Opcjonalne dodatkowe wskazowki redakcyjne dla etapu AI refinement"
+    )
+
+
+class ResumeHeaderRefinementPatch(BaseModel):
+    professional_headline: Optional[str] = Field(
+        default=None,
+        description="Nowa wartosc header.professional_headline; null oznacza brak zmiany"
+    )
+
+
+class ResumeExperienceEntryRefinementPatch(BaseModel):
+    source_experience_id: str = Field(
+        ...,
+        description="ID wpisu ResumeExperienceEntry, ktorego pola maja zostac nadpisane"
+    )
+    bullet_points: Optional[List[str]] = Field(
+        default=None,
+        description="Nowe bullet_points dla wskazanego wpisu; null oznacza brak zmiany"
+    )
+    highlighted_keywords: Optional[List[str]] = Field(
+        default=None,
+        description="Nowe highlighted_keywords dla wskazanego wpisu; null oznacza brak zmiany"
+    )
+
+
+class ResumeProjectEntryRefinementPatch(BaseModel):
+    source_project_id: str = Field(
+        ...,
+        description="ID wpisu ResumeProjectEntry, ktorego pola maja zostac nadpisane"
+    )
+    bullet_points: Optional[List[str]] = Field(
+        default=None,
+        description="Nowe bullet_points dla wskazanego projektu; null oznacza brak zmiany"
+    )
+    highlighted_keywords: Optional[List[str]] = Field(
+        default=None,
+        description="Nowe highlighted_keywords dla wskazanego projektu; null oznacza brak zmiany"
+    )
+
+
+class ResumeDraftRefinementPatch(BaseModel):
+    header: Optional[ResumeHeaderRefinementPatch] = Field(
+        default=None,
+        description="Patch dla wybranych pol header; null oznacza brak zmian w header"
+    )
+    professional_summary: Optional[str] = Field(
+        default=None,
+        description="Nowa wartosc professional_summary; null oznacza brak zmiany"
+    )
+    selected_skills: Optional[List[str]] = Field(
+        default=None,
+        description="Nowa wartosc selected_skills; null oznacza brak zmiany"
+    )
+    selected_keywords: Optional[List[str]] = Field(
+        default=None,
+        description="Nowa wartosc selected_keywords; null oznacza brak zmiany"
+    )
+    keyword_usage: Optional[List[str]] = Field(
+        default=None,
+        description="Nowa wartosc keyword_usage; null oznacza brak zmiany"
+    )
+    selected_experience_entries: List[ResumeExperienceEntryRefinementPatch] = Field(
+        default_factory=list,
+        description="Lista patchy dla juz wybranych ResumeExperienceEntry"
+    )
+    selected_project_entries: List[ResumeProjectEntryRefinementPatch] = Field(
+        default_factory=list,
+        description="Lista patchy dla juz wybranych ResumeProjectEntry"
     )

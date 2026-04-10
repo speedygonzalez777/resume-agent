@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models.analysis import MatchAnalysisRequest
-from app.services.match_service import analyze_match_basic
+from app.services.match_service import analyze_match_artifacts, analyze_match_basic
 from app.services.openai_candidate_profile_understanding_service import (
     CandidateLanguageNormalization,
     CandidateProfileSignal,
@@ -1621,3 +1621,48 @@ def test_requirement_type_classifier_falls_back_to_heuristics_when_openai_classi
 
     assert requirement_match.match_status == "partial"
     assert "language requirement" in requirement_match.explanation
+
+
+def test_analyze_match_artifacts_exposes_debug_breakdown_for_manual_confirmation() -> None:
+    request = _build_request(
+        [
+            _build_requirement(
+                "req_python",
+                "Python basics",
+                extracted_keywords=["Python"],
+                requirement_type="must_have",
+                importance="high",
+            ),
+            _build_requirement(
+                "req_availability",
+                "Available 30h/week for 6 months",
+                extracted_keywords=["30h/week", "6 months"],
+                category="other",
+                requirement_type="must_have",
+                importance="high",
+            ),
+        ]
+    )
+    priority_lookup = {
+        "req_python": _build_requirement_priority_item("req_python", "core"),
+        "req_availability": _build_requirement_priority_item("req_availability", "supporting"),
+    }
+
+    artifacts = analyze_match_artifacts(
+        request,
+        requirement_priority_lookup=priority_lookup,
+        candidate_profile_understanding=CandidateProfileUnderstanding(),
+    )
+
+    assert artifacts.matching_debug["score_breakdown"]["manual_confirmation_requirement_count"] == 1
+    assert artifacts.matching_debug["priority_summary"]["core_count"] == 1
+    assert artifacts.matching_debug["priority_summary"]["supporting_count"] == 1
+    assert artifacts.matching_debug["manual_confirmation_context"][0]["requirement_id"] == "req_availability"
+    availability_debug = next(
+        item
+        for item in artifacts.matching_debug["requirement_debug"]
+        if item["requirement_id"] == "req_availability"
+    )
+    assert availability_debug["scoring_bucket"] == "manual_confirmation"
+    assert availability_debug["priority_tier"] == "supporting"
+    assert "matching_only_signals" in artifacts.matching_debug["operational_context"]

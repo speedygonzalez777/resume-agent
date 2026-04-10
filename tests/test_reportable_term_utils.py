@@ -1,6 +1,7 @@
 from app.models.job import JobPosting, Requirement
 from app.services.reportable_term_utils import (
     build_reportable_offer_terms,
+    build_reportable_offer_terms_context,
     build_requirement_reportable_terms_lookup,
     parse_offer_term_candidate,
 )
@@ -52,7 +53,7 @@ def _build_priority_item(requirement_id: str, priority_tier: str) -> OpenAIRequi
     )
 
 
-def test_parse_offer_term_candidate_salvages_real_term_from_threshold_but_marks_primary_role() -> None:
+def test_parse_offer_term_candidate_salvages_real_term_from_threshold_but_keeps_constraint_role() -> None:
     job_posting = _build_job_posting()
     requirement = _build_requirement(
         "req_python",
@@ -67,8 +68,9 @@ def test_parse_offer_term_candidate_salvages_real_term_from_threshold_but_marks_
         job_posting=job_posting,
     )
 
-    assert candidate.primary_role == "matching_constraint"
-    assert candidate.reportable_term == "Python"
+    assert candidate.role == "constraint"
+    assert candidate.allowed_uses == ("matching_only",)
+    assert candidate.generation_candidate_label == "Python"
 
 
 def test_parse_offer_term_candidate_drops_generic_wrapper_phrase() -> None:
@@ -86,8 +88,34 @@ def test_parse_offer_term_candidate_drops_generic_wrapper_phrase() -> None:
         job_posting=job_posting,
     )
 
-    assert candidate.primary_role == "generic_wrapper"
-    assert candidate.reportable_term is None
+    assert candidate.role == "generic_wrapper_or_noise"
+    assert candidate.generation_candidate_label is None
+    assert candidate.suppression_reason == "generic_or_noise"
+
+
+def test_parse_offer_term_candidate_normalizes_internship_family_into_role_alignment_signal() -> None:
+    job_posting = _build_job_posting()
+    requirement = _build_requirement(
+        "req_internship",
+        "Program stażowy na 6 miesięcy",
+        ["program stażowy"],
+        category="other",
+        requirement_type="must_have",
+        importance="high",
+    )
+
+    candidate = parse_offer_term_candidate(
+        "program stażowy",
+        source_kind="requirement",
+        requirement=requirement,
+        job_posting=job_posting,
+    )
+
+    assert candidate.label == "Internship"
+    assert candidate.normalized_label == "internship"
+    assert candidate.role == "job_meta"
+    assert candidate.allowed_uses == ("matching_only", "ranking_only")
+    assert candidate.generation_candidate_label is None
 
 
 def test_build_reportable_offer_terms_separates_terms_from_modifiers_thresholds_and_metadata() -> None:
@@ -191,3 +219,39 @@ def test_build_reportable_offer_terms_allows_requirement_only_concrete_single_te
 
     assert requirement_terms["req_english"] == ["English", "communication"]
     assert reportable_terms == ["English", "communication", "PLC"]
+
+
+def test_build_reportable_offer_terms_context_separates_generation_matching_manual_and_suppressed_buckets() -> None:
+    job_posting = _build_job_posting()
+    job_posting.keywords = [
+        "Python",
+        "Java",
+        "SQL",
+        "studia",
+        "kierunki techniczne",
+        "30 godzin tygodniowo",
+        "6 miesięcy",
+        "hybrydowa",
+        "umowa zlecenie",
+        "staż",
+        "znajomość",
+    ]
+
+    context = build_reportable_offer_terms_context(job_posting)
+    debug_payload = context.to_debug_payload()
+
+    assert context.generation_eligible_offer_terms == ["Python", "Java", "SQL"]
+    assert {signal.normalized_label for signal in context.matching_only_signals} >= {
+        "studia",
+        "kierunki techniczne",
+        "hybrid",
+        "contract",
+        "internship",
+    }
+    assert {signal.normalized_label for signal in context.manual_confirmation_items} == {
+        "30 godzin tygodniowo",
+        "6 miesiecy",
+    }
+    assert [signal.normalized_label for signal in context.role_alignment_signals] == ["internship"]
+    assert {signal.normalized_label for signal in context.suppressed_terms} == {"znajomosc"}
+    assert debug_payload["generation_eligible_offer_terms"] == ["Python", "Java", "SQL"]

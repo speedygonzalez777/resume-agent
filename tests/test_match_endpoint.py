@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.api.contracts import MatchAnalyzeDebugResponse
 from app.main import app
 from app.models.match import MatchResult
 from app.services.openai_candidate_profile_understanding_service import (
@@ -71,6 +72,27 @@ def test_match_analyze_returns_match_result_structure(monkeypatch) -> None:
             assert "explanation" in requirement_match
             assert requirement_match["match_status"] in {"matched", "partial", "missing", "not_verifiable"}
             assert requirement_match["explanation"]
+
+
+def test_match_analyze_debug_returns_matching_debug_and_handoff(monkeypatch) -> None:
+    payload_path = Path("data/match_analysis_test.json")
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _disable_requirement_prioritization(monkeypatch)
+    _disable_candidate_profile_understanding(monkeypatch)
+    _disable_ai_requirement_candidate_matching(monkeypatch)
+
+    with TestClient(app) as client:
+        response = client.post("/match/analyze-debug", json=payload)
+
+    assert response.status_code == 200
+
+    parsed_response = MatchAnalyzeDebugResponse.model_validate(response.json())
+
+    assert parsed_response.matching_debug["score_breakdown"]["overall_score"] == parsed_response.match_result.overall_score
+    assert parsed_response.matching_debug["requirement_debug"]
+    assert "manual_confirmation_context" in parsed_response.matching_debug
+    assert parsed_response.matching_handoff.requirement_priority_lookup == {}
 
 
 def test_match_analyze_returns_not_verifiable_for_formal_requirement(monkeypatch) -> None:

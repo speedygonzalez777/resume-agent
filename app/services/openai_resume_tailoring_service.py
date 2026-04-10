@@ -17,8 +17,8 @@ from app.prompts.resume_tailoring_prompt import RESUME_TAILORING_INSTRUCTIONS
 from app.services.openai_candidate_profile_understanding_service import (
     CandidateProfileUnderstanding,
 )
+from app.services.openai_model_resolver import resolve_resume_generation_model
 
-_DEFAULT_RESUME_TAILORING_MODEL = "gpt-5-mini"
 _SAMPLING_CAPABLE_MODEL_PREFIXES = (
     "gpt-4.1",
     "gpt-4o",
@@ -142,6 +142,7 @@ def generate_resume_tailoring_with_openai(
     candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
     reportable_offer_terms: list[str] | None = None,
     requirement_reportable_terms_lookup: dict[str, list[str]] | None = None,
+    generation_bundle: dict[str, Any] | None = None,
 ) -> OpenAIResumeTailoringOutput:
     """Generate structured, truthful-first resume tailoring hints with OpenAI."""
 
@@ -152,7 +153,9 @@ def generate_resume_tailoring_with_openai(
             fallback_reason=ResumeFallbackReason.MISSING_API_KEY,
         )
 
-    model_name = os.getenv("OPENAI_RESUME_TAILORING_MODEL", _DEFAULT_RESUME_TAILORING_MODEL)
+    model_name = resolve_resume_generation_model(
+        legacy_env_name="OPENAI_RESUME_TAILORING_MODEL",
+    )
     client = OpenAI(api_key=api_key)
 
     try:
@@ -165,6 +168,7 @@ def generate_resume_tailoring_with_openai(
                 candidate_profile_understanding,
                 reportable_offer_terms,
                 requirement_reportable_terms_lookup,
+                generation_bundle,
             )
         )
     except ResumeTailoringOpenAIError:
@@ -201,6 +205,7 @@ def _build_responses_parse_kwargs(
     candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
     reportable_offer_terms: list[str] | None = None,
     requirement_reportable_terms_lookup: dict[str, list[str]] | None = None,
+    generation_bundle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI Responses API payload for structured resume tailoring."""
 
@@ -214,6 +219,7 @@ def _build_responses_parse_kwargs(
             candidate_profile_understanding,
             reportable_offer_terms,
             requirement_reportable_terms_lookup,
+            generation_bundle,
         ),
         "text_format": OpenAIResumeTailoringOutput,
     }
@@ -228,6 +234,7 @@ def _build_resume_tailoring_input(
     candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
     reportable_offer_terms: list[str] | None = None,
     requirement_reportable_terms_lookup: dict[str, list[str]] | None = None,
+    generation_bundle: dict[str, Any] | None = None,
 ) -> str:
     """Build a compact but traceable evidence pack sent to the model."""
 
@@ -306,6 +313,64 @@ def _build_resume_tailoring_input(
         ],
         "language_of_offer": job_posting.language_of_offer,
     }
+    curated_match_result = {
+        "overall_score": match_result.overall_score,
+        "fit_classification": match_result.fit_classification,
+        "recommendation": match_result.recommendation,
+        "final_summary": match_result.final_summary,
+        "strengths": match_result.strengths,
+        "gaps": match_result.gaps,
+        "requirement_matches": [
+            {
+                "requirement_id": requirement_match.requirement_id,
+                "match_status": requirement_match.match_status,
+                "matched_experience_ids": requirement_match.matched_experience_ids,
+                "matched_project_ids": requirement_match.matched_project_ids,
+                "matched_skill_names": requirement_match.matched_skill_names,
+                "missing_elements": requirement_match.missing_elements,
+            }
+            for requirement_match in match_result.requirement_matches
+        ],
+    }
+    curated_candidate_understanding = (
+        {
+            "source_signals": [
+                {
+                    "source_type": signal.source_type,
+                    "source_id": signal.source_id,
+                    "source_title": signal.source_title,
+                    "signal_label": signal.signal_label,
+                    "normalized_terms": signal.normalized_terms,
+                    "supporting_snippets": signal.supporting_snippets,
+                }
+                for signal in candidate_profile_understanding.source_signals
+            ],
+            "profile_signals": [
+                {
+                    "signal_label": signal.signal_label,
+                    "normalized_terms": signal.normalized_terms,
+                }
+                for signal in candidate_profile_understanding.profile_signals
+            ],
+            "language_normalizations": [
+                {
+                    "language_name": normalization.language_name,
+                    "normalized_cefr": normalization.normalized_cefr,
+                    "semantic_descriptors": normalization.semantic_descriptors,
+                }
+                for normalization in candidate_profile_understanding.language_normalizations
+            ],
+            "thematic_alignments": [
+                {
+                    "theme_label": alignment.theme_label,
+                    "normalized_terms": alignment.normalized_terms,
+                }
+                for alignment in candidate_profile_understanding.thematic_alignments
+            ],
+        }
+        if candidate_profile_understanding is not None
+        else None
+    )
 
     evidence_pack = {
         "candidate_profile": {
@@ -316,7 +381,14 @@ def _build_resume_tailoring_input(
             "interest_entries": candidate_profile.interest_entries,
             "experience_entries": experience_options,
             "project_entries": project_options,
-            "skill_entries": [entry.model_dump(mode="json") for entry in candidate_profile.skill_entries],
+            "skill_entries": [
+                {
+                    "name": entry.name,
+                    "aliases": entry.aliases,
+                    "evidence_sources": entry.evidence_sources,
+                }
+                for entry in candidate_profile.skill_entries
+            ],
             "education_entries": education_options,
             "language_entries": language_options,
             "certificate_entries": certificate_options,
@@ -327,12 +399,9 @@ def _build_resume_tailoring_input(
             "reportable_offer_terms": reportable_offer_terms or [],
             "requirement_reportable_terms_lookup": requirement_reportable_terms_lookup or {},
         },
-        "match_result": match_result.model_dump(mode="json"),
-        "candidate_profile_understanding": (
-            candidate_profile_understanding.model_dump(mode="json")
-            if candidate_profile_understanding is not None
-            else None
-        ),
+        "generation_semantics": generation_bundle or {},
+        "match_result": curated_match_result,
+        "candidate_profile_understanding": curated_candidate_understanding,
         "selection_options": {
             "education_entries": education_options,
             "language_entries": language_options,

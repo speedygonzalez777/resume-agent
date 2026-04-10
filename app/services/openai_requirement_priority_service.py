@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 
 from app.models.job import JobPosting, Requirement
 from app.prompts.requirement_priority_prompt import REQUIREMENT_PRIORITY_INSTRUCTIONS
+from app.services.openai_model_resolver import resolve_matching_model
 
-_DEFAULT_REQUIREMENT_PRIORITY_MODEL = "gpt-5-mini"
 _SAMPLING_CAPABLE_MODEL_PREFIXES = (
     "gpt-4.1",
     "gpt-4o",
@@ -99,7 +99,9 @@ def evaluate_requirement_priorities_with_openai(
             reason="missing_api_key",
         )
 
-    model_name = os.getenv("OPENAI_REQUIREMENT_PRIORITY_MODEL", _DEFAULT_REQUIREMENT_PRIORITY_MODEL)
+    model_name = resolve_matching_model(
+        legacy_env_name="OPENAI_REQUIREMENT_PRIORITY_MODEL",
+    )
     client = OpenAI(api_key=api_key)
 
     try:

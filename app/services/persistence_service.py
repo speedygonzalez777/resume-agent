@@ -11,13 +11,17 @@ from app.db.repositories import (
     get_candidate_profile_record,
     get_job_posting_record,
     get_match_result_record,
+    get_resume_draft_record,
     list_candidate_profile_records,
     list_job_posting_records,
     list_match_result_records,
+    list_resume_draft_records,
     save_candidate_profile_record,
     save_job_posting_record,
     save_match_result_record,
+    save_resume_draft_record,
     update_candidate_profile_record,
+    update_resume_draft_record_refinement,
 )
 from app.models.candidate import CandidateProfile
 from app.models.job import JobPosting
@@ -228,6 +232,107 @@ def list_match_results(limit: int = 50) -> list[dict[str, Any]]:
     ]
 
 
+def save_resume_draft(
+    *,
+    candidate_profile_id: int | None = None,
+    job_posting_id: int | None = None,
+    match_result_id: int | None = None,
+    target_job_title: str | None = None,
+    target_company_name: str | None = None,
+    generation_mode: str,
+    base_resume_artifacts: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist one generated resume-draft artifact bundle."""
+    record = save_resume_draft_record(
+        candidate_profile_id=candidate_profile_id,
+        job_posting_id=job_posting_id,
+        match_result_id=match_result_id,
+        target_job_title=target_job_title,
+        target_company_name=target_company_name,
+        generation_mode=generation_mode,
+        base_resume_artifacts_json=_serialize_json_like(base_resume_artifacts),
+    )
+    return {
+        "id": record["id"],
+        "saved_at": record["saved_at"],
+        "updated_at": record["updated_at"],
+        "candidate_profile_id": record["candidate_profile_id"],
+        "job_posting_id": record["job_posting_id"],
+        "match_result_id": record["match_result_id"],
+        "target_job_title": record["target_job_title"],
+        "target_company_name": record["target_company_name"],
+        "generation_mode": record["generation_mode"],
+        "has_refined_version": record["has_refined_version"],
+        "base_resume_artifacts": base_resume_artifacts,
+        "refined_resume_artifacts": None,
+    }
+
+
+def update_resume_draft_refinement(
+    draft_id: int,
+    *,
+    refined_resume_artifacts: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Persist the refined artifact bundle for one existing resume draft."""
+    record = update_resume_draft_record_refinement(
+        draft_id,
+        refined_resume_artifacts_json=_serialize_json_like(refined_resume_artifacts),
+    )
+    if record is None:
+        return None
+    return {
+        "id": record["id"],
+        "saved_at": record["saved_at"],
+        "updated_at": record["updated_at"],
+        "candidate_profile_id": record["candidate_profile_id"],
+        "job_posting_id": record["job_posting_id"],
+        "match_result_id": record["match_result_id"],
+        "target_job_title": record["target_job_title"],
+        "target_company_name": record["target_company_name"],
+        "generation_mode": record["generation_mode"],
+        "has_refined_version": record["has_refined_version"],
+        "base_resume_artifacts": _deserialize_json_like(record["base_resume_artifacts_json"]),
+        "refined_resume_artifacts": refined_resume_artifacts,
+    }
+
+
+def get_resume_draft(draft_id: int) -> dict[str, Any] | None:
+    """Load one stored resume draft bundle by database ID."""
+    record = get_resume_draft_record(draft_id)
+    if record is None:
+        return None
+    return _deserialize_resume_draft_record(record)
+
+
+def list_resume_drafts(
+    *,
+    limit: int = 50,
+    candidate_profile_id: int | None = None,
+    job_posting_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """List stored resume drafts without hydrating nested JSON payloads."""
+    records = list_resume_draft_records(
+        limit=limit,
+        candidate_profile_id=candidate_profile_id,
+        job_posting_id=job_posting_id,
+    )
+    return [
+        {
+            "id": record["id"],
+            "saved_at": record["saved_at"],
+            "updated_at": record["updated_at"],
+            "candidate_profile_id": record["candidate_profile_id"],
+            "job_posting_id": record["job_posting_id"],
+            "match_result_id": record["match_result_id"],
+            "target_job_title": record["target_job_title"],
+            "target_company_name": record["target_company_name"],
+            "generation_mode": record["generation_mode"],
+            "has_refined_version": record["has_refined_version"],
+        }
+        for record in records
+    ]
+
+
 def _serialize_model(model: Any) -> str:
     """Serialize a Pydantic model to JSON text for SQLite storage."""
     return json.dumps(model.model_dump(mode="json"), ensure_ascii=False)
@@ -236,3 +341,33 @@ def _serialize_model(model: Any) -> str:
 def _deserialize_model(payload_json: str, model_type: type[Any]) -> Any:
     """Deserialize stored JSON text back into the requested Pydantic model."""
     return model_type.model_validate(json.loads(payload_json))
+
+
+def _serialize_json_like(payload: Any) -> str:
+    """Serialize a JSON-like dict payload to SQLite text."""
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _deserialize_json_like(payload_json: str | None) -> Any:
+    """Deserialize stored JSON-like text payloads."""
+    if payload_json is None:
+        return None
+    return json.loads(payload_json)
+
+
+def _deserialize_resume_draft_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Hydrate one stored resume-draft record back into nested JSON-like payloads."""
+    return {
+        "id": record["id"],
+        "saved_at": record["saved_at"],
+        "updated_at": record["updated_at"],
+        "candidate_profile_id": record["candidate_profile_id"],
+        "job_posting_id": record["job_posting_id"],
+        "match_result_id": record["match_result_id"],
+        "target_job_title": record["target_job_title"],
+        "target_company_name": record["target_company_name"],
+        "generation_mode": record["generation_mode"],
+        "has_refined_version": record["has_refined_version"],
+        "base_resume_artifacts": _deserialize_json_like(record["base_resume_artifacts_json"]),
+        "refined_resume_artifacts": _deserialize_json_like(record["refined_resume_artifacts_json"]),
+    }

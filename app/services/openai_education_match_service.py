@@ -17,8 +17,8 @@ from app.models.match import RequirementMatch
 from app.prompts.education_requirement_match_prompt import (
     EDUCATION_REQUIREMENT_MATCH_INSTRUCTIONS,
 )
+from app.services.openai_model_resolver import resolve_matching_model
 
-_DEFAULT_EDUCATION_MATCH_MODEL = "gpt-5-mini"
 _SAMPLING_CAPABLE_MODEL_PREFIXES = (
     "gpt-4.1",
     "gpt-4o",
@@ -111,7 +111,9 @@ def evaluate_education_requirement_with_openai(
             reason="missing_api_key",
         )
 
-    model_name = os.getenv("OPENAI_EDUCATION_MATCH_MODEL", _DEFAULT_EDUCATION_MATCH_MODEL)
+    model_name = resolve_matching_model(
+        legacy_env_name="OPENAI_EDUCATION_MATCH_MODEL",
+    )
     client = OpenAI(api_key=api_key)
     education_options = _build_education_options(candidate_profile)
 

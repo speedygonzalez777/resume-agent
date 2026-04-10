@@ -11,9 +11,9 @@ from openai import OpenAI, OpenAIError
 from app.models.job import JobPosting
 from app.prompts.job_posting_parse_prompt import JOB_POSTING_PARSE_INSTRUCTIONS
 from app.services.job_page_fetch_service import FetchedJobPage
+from app.services.openai_model_resolver import resolve_job_parsing_model
 from app.services.job_parse_errors import AIJobParsingFailedError
 
-_DEFAULT_JOB_PARSER_MODEL = "gpt-5-mini"
 _SAMPLING_CAPABLE_MODEL_PREFIXES = (
     "gpt-4.1",
     "gpt-4o",
@@ -39,7 +39,7 @@ def parse_job_posting_with_openai(fetched_page: FetchedJobPage) -> JobPosting:
             "OpenAI API key is missing. Set OPENAI_API_KEY before using /job/parse-url."
         )
 
-    model_name = os.getenv("OPENAI_JOB_PARSER_MODEL", _DEFAULT_JOB_PARSER_MODEL)
+    model_name = resolve_job_parsing_model()
     client = OpenAI(api_key=api_key)
     request_kwargs = _build_responses_parse_kwargs(fetched_page, model_name)
 

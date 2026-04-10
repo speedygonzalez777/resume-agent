@@ -16,9 +16,9 @@ Backend:
 - walidacja `CandidateProfile`
 - walidacja `JobPosting`
 - URL-first parser ofert `POST /job/parse-url`
-- lokalna persystencja SQLite dla `CandidateProfile`, `JobPosting` i `MatchResult`
+- lokalna persystencja SQLite dla `CandidateProfile`, `JobPosting`, `MatchResult` i zapisanych draftow CV
 - category-aware matching zwracajacy `MatchResult` z weighted score, `not_verifiable`, AI-assisted requirement-type classification i AI-assisted education upgrade path
-- stateless generator CV `POST /resume/generate`, ktory zwraca `ResumeDraft` i `ChangeReport`
+- generator CV `POST /resume/generate`, ktory zwraca `ResumeDraft`, `ChangeReport` i zapisuje draft lokalnie, kiedy persystencja SQLite jest dostepna
 
 Frontend:
 - zakladka `Oferty pracy`
@@ -76,16 +76,21 @@ Opcjonalnie dla trudniejszych stron ofert:
 ## Wazne env vars
 
 Backend:
-- `OPENAI_API_KEY` - wymagany do AI parsera ofert, AI requirement-type classification, AI-assisted education matching i AI resume tailoring
+- `OPENAI_API_KEY` - wymagany do warstwy AI backendu
 - `RESUME_AGENT_DB_URL` - opcjonalny override URL SQLite
 - `JOB_URL_BROWSER_FALLBACK_ENABLED` - wlacza lokalny fallback Playwright
 - `JOB_URL_BROWSER_FALLBACK_DOMAINS` - opcjonalna lista domen dla fallbacku
 - `JOB_URL_BROWSER_FALLBACK_TIMEOUT_SECONDS`
 - `JOB_URL_BROWSER_FALLBACK_WAIT_MS`
-- `OPENAI_REQUIREMENT_TYPE_MODEL` - opcjonalny override modelu dla AI requirement-type classifier
+- `OPENAI_JOB_PARSER_MODEL` - model workflow `job_parsing`, domyslnie `gpt-5-mini`
+- `OPENAI_MATCHING_MODEL` - model calej warstwy AI workflow `matching`, domyslnie `gpt-5.4`
+- `OPENAI_RESUME_GENERATION_MODEL` - model workflow `resume_generation`, domyslnie `gpt-5.4`
+- `OPENAI_RESUME_DRAFT_REFINEMENT_MODEL` - model workflow `resume_refinement`, domyslnie `gpt-5-mini`
+- stare env per-serwis pozostaja wspierane jako fallback i maja nizszy priorytet niz envy workflow-level
+- `OPENAI_REQUIREMENT_TYPE_MODEL` - fallbackowy override modelu dla AI requirement-type classifier
 - `OPENAI_REQUIREMENT_TYPE_TEMPERATURE` - opcjonalny sampling override dla wspieranych rodzin modeli
 - `OPENAI_REQUIREMENT_TYPE_TOP_P` - opcjonalny sampling override dla wspieranych rodzin modeli
-- `OPENAI_EDUCATION_MATCH_MODEL` - opcjonalny override modelu dla AI-assisted education matching
+- `OPENAI_EDUCATION_MATCH_MODEL` - fallbackowy override modelu dla AI-assisted education matching
 
 Frontend:
 - `VITE_API_BASE_URL` - opcjonalny URL backendu, domyslnie `http://127.0.0.1:8000`
@@ -279,8 +284,12 @@ http://127.0.0.1:5173
 - wybor zapisanej oferty
 - uzycie zapisanego `MatchResult` albo inline `POST /match/analyze`
 - `POST /resume/generate`
+- `GET /resume/drafts`
+- `GET /resume/drafts/{draft_id}`
+- `POST /resume/refine-draft`
 - czytelny `ResumeDraft`
 - czytelny `ChangeReport`
+- lista zapisanych draftow CV dla wybranej pary profilu i oferty
 - informacja, ze list motywacyjny bedzie dodany w kolejnym etapie
 
 ## Obecny matching

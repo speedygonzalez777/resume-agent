@@ -20,9 +20,9 @@ from app.prompts.requirement_candidate_match_prompt import (
 from app.services.openai_candidate_profile_understanding_service import (
     CandidateProfileUnderstanding,
 )
+from app.services.openai_model_resolver import resolve_matching_model
 from app.services.openai_requirement_priority_service import OpenAIRequirementPriorityItem
 
-_DEFAULT_REQUIREMENT_CANDIDATE_MATCH_MODEL = "gpt-5-mini"
 _SAMPLING_CAPABLE_MODEL_PREFIXES = (
     "gpt-4.1",
     "gpt-4o",
@@ -204,9 +204,8 @@ def evaluate_requirement_candidate_block_with_openai(
     if not target_requirements:
         return RequirementCandidateMatchOutput()
 
-    model_name = os.getenv(
-        "OPENAI_REQUIREMENT_CANDIDATE_MATCH_MODEL",
-        _DEFAULT_REQUIREMENT_CANDIDATE_MATCH_MODEL,
+    model_name = resolve_matching_model(
+        legacy_env_name="OPENAI_REQUIREMENT_CANDIDATE_MATCH_MODEL",
     )
     client = OpenAI(api_key=api_key)
     candidate_source_catalog, candidate_source_lookup = build_candidate_match_source_catalog(

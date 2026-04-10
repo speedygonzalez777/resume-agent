@@ -5,9 +5,10 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.api.contracts import MatchAnalyzeDebugResponse, MatchingHandoffPayload
 from app.models.analysis import MatchAnalysisRequest
 from app.models.match import MatchResult
-from app.services.match_service import analyze_match_basic
+from app.services.match_service import analyze_match_artifacts, analyze_match_basic
 from app.services.persistence_service import get_match_result, list_match_results, save_match_result
 
 router = APIRouter(prefix="/match", tags=["match"])
@@ -47,6 +48,20 @@ class MatchResultListItem(BaseModel):
 def analyze_match(payload: MatchAnalysisRequest) -> MatchResult:
     """Analyze fit between candidate profile and job posting."""
     return analyze_match_basic(payload)
+
+
+@router.post("/analyze-debug", response_model=MatchAnalyzeDebugResponse)
+def analyze_match_debug(payload: MatchAnalysisRequest) -> MatchAnalyzeDebugResponse:
+    """Analyze fit and return developer-facing debug output plus reusable sidecars."""
+    artifacts = analyze_match_artifacts(payload)
+    return MatchAnalyzeDebugResponse(
+        match_result=artifacts.match_result,
+        matching_debug=artifacts.matching_debug,
+        matching_handoff=MatchingHandoffPayload(
+            requirement_priority_lookup=artifacts.requirement_priority_lookup,
+            candidate_profile_understanding=artifacts.candidate_profile_understanding,
+        ),
+    )
 
 
 @router.post("/save", response_model=StoredMatchResultResponse)

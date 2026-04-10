@@ -13,6 +13,7 @@ import {
   saveJobPosting,
 } from "./api";
 import JobPostingDetails from "./JobPostingDetails";
+import RawJsonPanel from "./RawJsonPanel";
 
 /**
  * Convert an unknown error into a short user-facing message.
@@ -356,10 +357,7 @@ export default function JobOffersTab({ onJobSaved }) {
                   <p className="detail-text">{parsedJobPosting.role_summary || "Brak opisu roli."}</p>
                 </section>
 
-                <details className="raw-json-toggle">
-                  <summary>Raw JSON sparsowanej oferty</summary>
-                  <pre>{JSON.stringify(parsedJobPosting, null, 2)}</pre>
-                </details>
+                <RawJsonPanel summary="Raw JSON sparsowanej oferty" value={parsedJobPosting} />
               </div>
             ) : (
               <p className="placeholder">
@@ -496,5 +494,4 @@ export default function JobOffersTab({ onJobSaved }) {
     </section>
   );
 }
-
 

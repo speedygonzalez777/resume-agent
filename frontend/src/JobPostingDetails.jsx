@@ -2,6 +2,8 @@
  * Structured presentation of a JobPosting with a collapsible raw JSON block.
  */
 
+import RawJsonPanel from "./RawJsonPanel";
+
 const SHORT_DISPLAY_KEYWORD_CANONICAL_MAP = {
   ai: "AI",
   api: "API",
@@ -200,10 +202,7 @@ export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON
         )}
       </section>
 
-      <details className="raw-json-toggle">
-        <summary>{rawJsonLabel}</summary>
-        <pre>{JSON.stringify(jobPosting, null, 2)}</pre>
-      </details>
+      <RawJsonPanel summary={rawJsonLabel} value={jobPosting} />
     </div>
   );
 }

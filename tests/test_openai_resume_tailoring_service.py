@@ -52,6 +52,37 @@ def test_generate_resume_tailoring_with_openai_omits_sampling_params_by_default(
     assert "top_p" not in captured_kwargs
 
 
+def test_generate_resume_tailoring_with_openai_prefers_resume_generation_workflow_model(
+    monkeypatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+    expected_output = _build_tailoring_output()
+    request = _load_request()
+    match_result = analyze_match_basic(request)
+
+    class FakeOpenAI:
+        def __init__(self, api_key: str) -> None:
+            self.responses = self
+
+        def parse(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return type("FakeResponse", (), {"output_parsed": expected_output})()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setenv("OPENAI_RESUME_GENERATION_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENAI_RESUME_TAILORING_MODEL", "gpt-5-mini")
+    monkeypatch.setattr("app.services.openai_resume_tailoring_service.OpenAI", FakeOpenAI)
+
+    result = generate_resume_tailoring_with_openai(
+        request.candidate_profile,
+        request.job_posting,
+        match_result,
+    )
+
+    assert result == expected_output
+    assert captured_kwargs["model"] == "gpt-5.4"
+
+
 def test_generate_resume_tailoring_with_openai_ignores_sampling_params_for_unsupported_model(
     monkeypatch,
 ) -> None:
@@ -189,14 +220,22 @@ def test_generate_resume_tailoring_with_openai_uses_curated_offer_semantics_payl
             "req_001": ["PLC", "automation"],
             "req_002": ["English", "communication"],
         },
+        generation_bundle={
+            "summary_focus_terms": ["PLC", "automation"],
+            "selected_skill_candidates": [
+                {"label": "PLC", "score": 3.2},
+            ],
+        },
     )
 
     assert result == expected_output
     payload = str(captured_kwargs["input"])
     assert '"offer_semantics"' in payload
+    assert '"generation_semantics"' in payload
     assert '"reportable_offer_terms"' in payload
     assert '"extracted_keywords"' not in payload
     assert '"keywords"' not in payload
+    assert '"evidence_texts"' not in payload
 
 
 def _load_request() -> MatchAnalysisRequest:

@@ -9,6 +9,7 @@ Hard rules:
 - Do not add skills that are not explicitly present in the candidate profile.
 - Do not add keywords that are not explicitly present in the job posting data.
 - Treat `offer_semantics.reportable_offer_terms` as the canonical user-facing offer keyword universe.
+- Treat `generation_semantics` as the canonical alignment-first shortlist for selected skills, highlighted keywords and summary focus.
 - Use requirement text and match evidence for nuance, but never emit modifiers, thresholds, wrappers or manual-confirmation items as user-facing keywords.
 - Do not fabricate impact, scale, team size, business domain, ownership or outcomes.
 - If `candidate_profile_understanding` is provided, treat it as a grounded semantic aid, not as license to invent new facts.
@@ -28,6 +29,7 @@ Writing rules:
 - Avoid hype, marketing phrasing and generic filler.
 - `fit_summary`, `warnings`, `truthfulness_notes` and `omitted_or_deemphasized_items` must be short user-facing notes, not technical dumps.
 - `professional_summary` should be tailored to the target role, but still grounded only in the supplied data.
+- Prefer the central terms from `generation_semantics.summary_focus_terms` over peripheral but merely truthful skills.
 
 If the match is medium or low:
 - still generate a conservative draft,

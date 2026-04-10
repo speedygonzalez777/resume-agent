@@ -2,6 +2,8 @@
  * Structured preview of a generated ResumeDraft.
  */
 
+import RawJsonPanel from "./RawJsonPanel";
+
 /**
  * Render a placeholder-friendly string list.
  *
@@ -30,6 +32,12 @@ function renderStringList(items, emptyText) {
 export default function ResumeDraftDetails({ resumeDraft }) {
   const header = resumeDraft?.header ?? {};
   const selectedSkills = Array.isArray(resumeDraft?.selected_skills) ? resumeDraft.selected_skills : [];
+  const selectedSoftSkillEntries = Array.isArray(resumeDraft?.selected_soft_skill_entries)
+    ? resumeDraft.selected_soft_skill_entries
+    : [];
+  const selectedInterestEntries = Array.isArray(resumeDraft?.selected_interest_entries)
+    ? resumeDraft.selected_interest_entries
+    : [];
   const selectedExperienceEntries = Array.isArray(resumeDraft?.selected_experience_entries)
     ? resumeDraft.selected_experience_entries
     : [];
@@ -45,6 +53,7 @@ export default function ResumeDraftDetails({ resumeDraft }) {
   const selectedCertificateEntries = Array.isArray(resumeDraft?.selected_certificate_entries)
     ? resumeDraft.selected_certificate_entries
     : [];
+  const selectedKeywords = Array.isArray(resumeDraft?.selected_keywords) ? resumeDraft.selected_keywords : [];
   const keywordUsage = Array.isArray(resumeDraft?.keyword_usage) ? resumeDraft.keyword_usage : [];
   const links = Array.isArray(header?.links) ? header.links : [];
 
@@ -55,7 +64,6 @@ export default function ResumeDraftDetails({ resumeDraft }) {
         <div className="detail-header">
           <div>
             <h3 className="detail-title">{header.full_name || "Brak imienia i nazwiska"}</h3>
-            <p className="detail-company">{header.professional_headline || "Brak naglowka zawodowego"}</p>
           </div>
         </div>
 
@@ -109,6 +117,32 @@ export default function ResumeDraftDetails({ resumeDraft }) {
         )}
       </section>
 
+      {selectedSoftSkillEntries.length > 0 ? (
+        <section className="detail-section">
+          <h4>Soft skills</h4>
+          <div className="chip-row">
+            {selectedSoftSkillEntries.map((skill) => (
+              <span key={skill} className="chip muted">
+                {skill}
+              </span>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {selectedInterestEntries.length > 0 ? (
+        <section className="detail-section">
+          <h4>Obszary zainteresowan</h4>
+          <div className="chip-row">
+            {selectedInterestEntries.map((interest) => (
+              <span key={interest} className="chip muted">
+                {interest}
+              </span>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="detail-section">
         <h4>Wybrane doswiadczenia</h4>
         {selectedExperienceEntries.length > 0 ? (
@@ -157,6 +191,11 @@ export default function ResumeDraftDetails({ resumeDraft }) {
                     <h5>{entry.project_name}</h5>
                     <p>{entry.role || "Brak roli projektu"}</p>
                   </div>
+                  {entry.link ? (
+                    <a className="detail-link" href={entry.link} target="_blank" rel="noreferrer">
+                      Project link
+                    </a>
+                  ) : null}
                 </div>
 
                 {renderStringList(entry.bullet_points || [], "Brak bullet points dla tego projektu.")}
@@ -200,26 +239,40 @@ export default function ResumeDraftDetails({ resumeDraft }) {
         </section>
 
         <section className="detail-section">
-          <h4>Uzyte keywords</h4>
-          {keywordUsage.length > 0 ? (
+          <h4>Wybrane keywords</h4>
+          {selectedKeywords.length > 0 ? (
             <div className="chip-row">
-              {keywordUsage.map((keyword) => (
-                <span key={keyword} className="chip accent">
+              {selectedKeywords.map((keyword) => (
+                <span key={keyword} className="chip muted">
                   {keyword}
                 </span>
               ))}
             </div>
           ) : (
-            <p className="placeholder">Brak zarejestrowanych keywords w draftcie.</p>
+            <p className="placeholder">Brak wybranych keywords w draftcie.</p>
           )}
         </section>
       </div>
 
-      <details className="raw-json-toggle">
-        <summary>Raw JSON ResumeDraft</summary>
-        <pre>{JSON.stringify(resumeDraft, null, 2)}</pre>
-      </details>
+      <section className="detail-section">
+        <h4>Uzyte keywords</h4>
+        {keywordUsage.length > 0 ? (
+          <div className="chip-row">
+            {keywordUsage.map((keyword) => (
+              <span key={keyword} className="chip accent">
+                {keyword}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="placeholder">Brak zarejestrowanych keywords w draftcie.</p>
+        )}
+        <p className="helper-text">
+          To pole pomaga szybko sprawdzic, czy AI refinement nie rozmywa keywordow uzytych w dokumencie.
+        </p>
+      </section>
+
+      <RawJsonPanel summary="Raw JSON ResumeDraft" value={resumeDraft} />
     </div>
   );
 }
-

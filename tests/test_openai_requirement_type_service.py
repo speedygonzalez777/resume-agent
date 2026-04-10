@@ -46,6 +46,33 @@ def test_evaluate_requirement_type_with_openai_omits_sampling_params_by_default(
     assert "top_p" not in captured_kwargs
 
 
+def test_evaluate_requirement_type_with_openai_prefers_matching_workflow_model_over_legacy_env(
+    monkeypatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+    expected_output = _build_output()
+    request = _build_request()
+    requirement = request.job_posting.requirements[0]
+
+    class FakeOpenAI:
+        def __init__(self, api_key: str) -> None:
+            self.responses = self
+
+        def parse(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return type("FakeResponse", (), {"output_parsed": expected_output})()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setenv("OPENAI_MATCHING_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENAI_REQUIREMENT_TYPE_MODEL", "gpt-5-mini")
+    monkeypatch.setattr("app.services.openai_requirement_type_service.OpenAI", FakeOpenAI)
+
+    result = evaluate_requirement_type_with_openai(requirement, request.job_posting)
+
+    assert result == expected_output
+    assert captured_kwargs["model"] == "gpt-5.4"
+
+
 def test_evaluate_requirement_type_with_openai_includes_sampling_params_for_supported_model(
     monkeypatch,
 ) -> None:

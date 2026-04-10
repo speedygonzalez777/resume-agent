@@ -2,6 +2,8 @@
  * Structured presentation of a stored CandidateProfile with helper raw JSON preview.
  */
 
+import RawJsonPanel from "./RawJsonPanel";
+
 /**
  * Build compact profile summary items for the top metadata grid.
  *
@@ -330,10 +332,7 @@ export default function CandidateProfileDetails({ profile }) {
         </div>
       </details>
 
-      <details className="raw-json-toggle">
-        <summary>Raw JSON zapisanego profilu</summary>
-        <pre>{JSON.stringify(profile, null, 2)}</pre>
-      </details>
+      <RawJsonPanel summary="Raw JSON zapisanego profilu" value={profile} />
     </div>
   );
 }

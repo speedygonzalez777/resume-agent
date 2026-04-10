@@ -15,8 +15,8 @@ from app.models.candidate import CandidateProfile
 from app.prompts.candidate_profile_understanding_prompt import (
     CANDIDATE_PROFILE_UNDERSTANDING_INSTRUCTIONS,
 )
+from app.services.openai_model_resolver import resolve_matching_model
 
-_DEFAULT_CANDIDATE_PROFILE_UNDERSTANDING_MODEL = "gpt-5-mini"
 _SAMPLING_CAPABLE_MODEL_PREFIXES = (
     "gpt-4.1",
     "gpt-4o",
@@ -287,9 +287,8 @@ def evaluate_candidate_profile_understanding_with_openai(
             reason="missing_api_key",
         )
 
-    model_name = os.getenv(
-        "OPENAI_CANDIDATE_PROFILE_UNDERSTANDING_MODEL",
-        _DEFAULT_CANDIDATE_PROFILE_UNDERSTANDING_MODEL,
+    model_name = resolve_matching_model(
+        legacy_env_name="OPENAI_CANDIDATE_PROFILE_UNDERSTANDING_MODEL",
     )
     client = OpenAI(api_key=api_key)
     source_catalog, source_lookup, language_ids = _build_source_catalog(candidate_profile)

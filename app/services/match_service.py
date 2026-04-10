@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import os
 import re
 
@@ -36,7 +36,10 @@ from app.services.openai_requirement_type_service import (
     RequirementTypeClassificationOpenAIError,
     evaluate_requirement_type_with_openai,
 )
-from app.services.reportable_term_utils import build_reportable_offer_terms
+from app.services.reportable_term_utils import (
+    build_reportable_offer_terms,
+    build_reportable_offer_terms_context,
+)
 
 _IMPORTANCE_WEIGHTS = {
     "high": 1.0,
@@ -350,6 +353,16 @@ class MatchScoreBreakdown:
     core_partial_count: int
     critical_not_verifiable_count: int
     pending_confirmation_count: int
+
+
+@dataclass(slots=True)
+class MatchAnalysisArtifacts:
+    """Full internal matching output used for debug and downstream reuse."""
+
+    match_result: MatchResult
+    matching_debug: dict[str, object]
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem]
+    candidate_profile_understanding: CandidateProfileUnderstanding | None
 
 
 def _normalize(value: str | None) -> str:
@@ -2740,26 +2753,145 @@ def _build_final_summary(
     return summary
 
 
-def analyze_match_basic(
+def _build_candidate_understanding_summary(
+    candidate_profile_understanding: CandidateProfileUnderstanding | None,
+) -> dict[str, object] | None:
+    """Build a compact summary of the AI candidate-understanding sidecar for debug output."""
+
+    if candidate_profile_understanding is None:
+        return None
+
+    return {
+        "source_signal_count": len(candidate_profile_understanding.source_signals),
+        "profile_signal_count": len(candidate_profile_understanding.profile_signals),
+        "language_normalization_count": len(candidate_profile_understanding.language_normalizations),
+        "thematic_alignment_count": len(candidate_profile_understanding.thematic_alignments),
+        "top_source_signals": [
+            {
+                "source_type": signal.source_type,
+                "source_id": signal.source_id,
+                "signal_label": signal.signal_label,
+                "signal_kind": signal.signal_kind,
+                "confidence": signal.confidence,
+            }
+            for signal in candidate_profile_understanding.source_signals[:8]
+        ],
+        "top_profile_signals": [
+            {
+                "signal_label": signal.signal_label,
+                "signal_kind": signal.signal_kind,
+                "confidence": signal.confidence,
+                "source_ref_count": len(signal.source_refs),
+            }
+            for signal in candidate_profile_understanding.profile_signals[:8]
+        ],
+        "warnings": list(candidate_profile_understanding.warnings),
+    }
+
+
+def _build_matching_debug_payload(
+    payload: MatchAnalysisRequest,
+    requirement_records: list[RequirementEvaluationRecord],
+    score_breakdown: MatchScoreBreakdown,
+    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+    candidate_profile_understanding: CandidateProfileUnderstanding | None,
+    semantic_upgrade_count: int,
+) -> dict[str, object]:
+    """Build a compact developer-facing debug payload for match analysis."""
+
+    offer_signal_context = build_reportable_offer_terms_context(
+        payload.job_posting,
+        requirement_priority_lookup=priority_lookup,
+    )
+    requirement_debug: list[dict[str, object]] = []
+    manual_confirmation_context: list[dict[str, object]] = []
+
+    for record in requirement_records:
+        scoring_profile = _build_requirement_scoring_profile(record, priority_lookup)
+        priority_item = priority_lookup.get(record.requirement.id)
+        requirement_row = {
+            "requirement_id": record.requirement.id,
+            "text": record.requirement.text,
+            "category": record.requirement.category,
+            "requirement_type": record.requirement.requirement_type,
+            "importance": record.requirement.importance,
+            "priority_tier": scoring_profile.priority_tier,
+            "priority_confidence": priority_item.confidence if priority_item is not None else None,
+            "priority_reasoning": priority_item.reasoning_note if priority_item is not None else None,
+            "requirement_group": record.requirement_group,
+            "scoring_bucket": scoring_profile.bucket,
+            "scoring_weight": round(scoring_profile.weight, 4),
+            "status_score": scoring_profile.status_score,
+            "match_status": record.requirement_match.match_status,
+            "explanation": record.requirement_match.explanation,
+            "missing_elements": list(record.requirement_match.missing_elements),
+            "matched_experience_ids": list(record.requirement_match.matched_experience_ids),
+            "matched_project_ids": list(record.requirement_match.matched_project_ids),
+            "matched_skill_names": list(record.requirement_match.matched_skill_names),
+            "evidence_texts": list(record.requirement_match.evidence_texts),
+            "linked_generation_terms": list(
+                offer_signal_context.requirement_terms_lookup.get(record.requirement.id, [])
+            ),
+        }
+        requirement_debug.append(requirement_row)
+
+        if scoring_profile.bucket == "manual_confirmation":
+            manual_confirmation_context.append(
+                {
+                    "requirement_id": record.requirement.id,
+                    "text": record.requirement.text,
+                    "match_status": record.requirement_match.match_status,
+                    "explanation": record.requirement_match.explanation,
+                    "missing_elements": list(record.requirement_match.missing_elements),
+                }
+            )
+
+    priority_counts = count_requirement_priority_tiers(priority_lookup)
+    return {
+        "score_breakdown": asdict(score_breakdown),
+        "priority_summary": {
+            "core_count": priority_counts["core"],
+            "supporting_count": priority_counts["supporting"],
+            "low_signal_count": priority_counts["low_signal"],
+            "ordered_requirement_ids": [record.requirement.id for record in requirement_records],
+        },
+        "requirement_debug": requirement_debug,
+        "candidate_understanding_summary": _build_candidate_understanding_summary(
+            candidate_profile_understanding
+        ),
+        "manual_confirmation_context": manual_confirmation_context,
+        "operational_context": {
+            "matching_only_signals": [
+                signal.label for signal in offer_signal_context.matching_only_signals
+            ],
+            "manual_confirmation_items": [
+                signal.label for signal in offer_signal_context.manual_confirmation_items
+            ],
+        },
+        "semantic_upgrade_count": semantic_upgrade_count,
+    }
+
+
+def analyze_match_artifacts(
     payload: MatchAnalysisRequest,
     *,
     requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
     candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
-) -> MatchResult:
-    """Analyze candidate-vs-job fit using category-aware deterministic evidence."""
+) -> MatchAnalysisArtifacts:
+    """Analyze candidate-vs-job fit and return reusable debug/handoff sidecars."""
+    priority_lookup_provided = requirement_priority_lookup is not None
+    candidate_understanding_provided = candidate_profile_understanding is not None
     profile_understanding = candidate_profile_understanding
-    if profile_understanding is None and _has_configured_openai_api_key():
+    if not candidate_understanding_provided and _has_configured_openai_api_key():
         profile_understanding = get_candidate_profile_understanding(payload.candidate_profile)
 
     context = _build_candidate_evidence_context(
         payload,
         candidate_profile_understanding=profile_understanding,
     )
-    priority_lookup = requirement_priority_lookup
-    if priority_lookup is None and _has_configured_openai_api_key():
+    priority_lookup = requirement_priority_lookup if requirement_priority_lookup is not None else {}
+    if not priority_lookup_provided and _has_configured_openai_api_key():
         priority_lookup = get_requirement_priority_lookup(payload.job_posting)
-    if priority_lookup is None:
-        priority_lookup = {}
     grouped_matches = [
         _evaluate_requirement(requirement, context)
         for requirement in payload.job_posting.requirements
@@ -2842,7 +2974,7 @@ def analyze_match_basic(
         priority_lookup,
     )
 
-    return MatchResult(
+    match_result = MatchResult(
         overall_score=rounded_score,
         fit_classification=fit_classification,
         recommendation=recommendation,
@@ -2866,3 +2998,30 @@ def analyze_match_basic(
             semantic_upgrade_count,
         ),
     )
+    return MatchAnalysisArtifacts(
+        match_result=match_result,
+        matching_debug=_build_matching_debug_payload(
+            payload,
+            ordered_requirement_records,
+            score_breakdown,
+            priority_lookup,
+            profile_understanding,
+            semantic_upgrade_count,
+        ),
+        requirement_priority_lookup=priority_lookup,
+        candidate_profile_understanding=profile_understanding,
+    )
+
+
+def analyze_match_basic(
+    payload: MatchAnalysisRequest,
+    *,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
+    candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
+) -> MatchResult:
+    """Analyze candidate-vs-job fit using category-aware deterministic evidence."""
+    return analyze_match_artifacts(
+        payload,
+        requirement_priority_lookup=requirement_priority_lookup,
+        candidate_profile_understanding=candidate_profile_understanding,
+    ).match_result

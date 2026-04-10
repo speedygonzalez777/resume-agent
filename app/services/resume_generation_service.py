@@ -6,7 +6,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Literal
 
 from app.models.analysis import MatchAnalysisRequest
 from app.models.candidate import CandidateProfile, ExperienceEntry, ProjectEntry
@@ -33,8 +33,10 @@ from app.services.openai_requirement_priority_service import (
     get_requirement_priority_lookup,
 )
 from app.services.reportable_term_utils import (
+    ReportableOfferTermsContext,
     build_reportable_offer_terms_context,
 )
+from app.services.term_relation_utils import find_offer_term_relation_hits
 from app.services.openai_resume_tailoring_service import (
     OpenAIResumeTailoringOutput,
     ResumeTailoringOpenAIError,
@@ -104,10 +106,96 @@ class ResumeSemanticContext:
 
     requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem]
     candidate_profile_understanding: CandidateProfileUnderstanding | None
+    offer_signal_context: ReportableOfferTermsContext
     reportable_job_keywords: list[str]
     requirement_reportable_terms_lookup: dict[str, list[str]]
     source_signal_term_lookup: dict[tuple[str, str], list[str]]
     job_keyword_lookup: dict[str, str]
+
+
+@dataclass(frozen=True)
+class OfferTermAlignment:
+    """One generation-facing offer term together with its downstream centrality."""
+
+    term: str
+    centrality_score: float
+    linked_requirement_ids: tuple[str, ...]
+    top_level_term: bool
+
+    def to_debug_dict(self) -> dict[str, object]:
+        return {
+            "term": self.term,
+            "centrality_score": round(self.centrality_score, 3),
+            "linked_requirement_ids": list(self.linked_requirement_ids),
+            "top_level_term": self.top_level_term,
+        }
+
+
+@dataclass(frozen=True)
+class SourceAlignment:
+    """Grounded generation alignment for one experience/project source."""
+
+    source_type: Literal["experience", "project"]
+    source_id: str
+    score: float
+    linked_requirement_ids: tuple[str, ...]
+    exact_generation_terms: tuple[str, ...]
+    supporting_generation_terms: tuple[str, ...]
+    source_signal_terms: tuple[str, ...]
+    matched_skill_names: tuple[str, ...]
+    bullet_relevance_terms: tuple[str, ...]
+
+    def to_debug_dict(self) -> dict[str, object]:
+        return {
+            "source_type": self.source_type,
+            "source_id": self.source_id,
+            "score": round(self.score, 3),
+            "linked_requirement_ids": list(self.linked_requirement_ids),
+            "exact_generation_terms": list(self.exact_generation_terms),
+            "supporting_generation_terms": list(self.supporting_generation_terms),
+            "source_signal_terms": list(self.source_signal_terms),
+            "matched_skill_names": list(self.matched_skill_names),
+            "bullet_relevance_terms": list(self.bullet_relevance_terms),
+        }
+
+
+@dataclass(frozen=True)
+class SkillSelectionCandidate:
+    """One grounded skill candidate scored for the current offer alignment."""
+
+    label: str
+    score: float
+    exact_generation_terms: tuple[str, ...]
+    supporting_generation_terms: tuple[str, ...]
+    evidence_source_ids: tuple[str, ...]
+    matched_requirement_ids: tuple[str, ...]
+    evidence_kinds: tuple[str, ...]
+
+    def to_debug_dict(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "score": round(self.score, 3),
+            "exact_generation_terms": list(self.exact_generation_terms),
+            "supporting_generation_terms": list(self.supporting_generation_terms),
+            "evidence_source_ids": list(self.evidence_source_ids),
+            "matched_requirement_ids": list(self.matched_requirement_ids),
+            "evidence_kinds": list(self.evidence_kinds),
+        }
+
+
+@dataclass(frozen=True)
+class ResumeGenerationBundle:
+    """Precomputed generation-facing bundle reused across deterministic and AI paths."""
+
+    offer_term_alignments: dict[str, OfferTermAlignment]
+    experience_alignments: dict[str, SourceAlignment]
+    project_alignments: dict[str, SourceAlignment]
+    skill_candidates: tuple[SkillSelectionCandidate, ...]
+    summary_focus_terms: tuple[str, ...]
+
+    def build_aligned_skill_lookup(self) -> dict[str, str]:
+        """Create the aligned candidate skill lookup allowed for top-level skill selection."""
+        return _build_allowed_value_lookup(candidate.label for candidate in self.skill_candidates)
 
 
 def _normalize(value: str | None) -> str:
@@ -266,14 +354,12 @@ def _collect_text_values(values: Iterable[str | None]) -> list[str]:
 
 def _find_keyword_hits(keywords: Iterable[str], texts: Iterable[str]) -> list[str]:
     """Find keywords that are explicitly present in one or more texts."""
-    searchable_texts = [_normalize(text) for text in texts if text]
     hits: list[str] = []
 
     for keyword in keywords:
-        normalized_keyword = _normalize(keyword)
-        if not normalized_keyword:
+        if not _normalize(keyword):
             continue
-        if any(normalized_keyword in text for text in searchable_texts):
+        if any(_text_contains_term(keyword, text) for text in texts if text):
             _append_unique(hits, keyword)
 
     return hits
@@ -330,6 +416,7 @@ def _build_resume_semantic_context(
     return ResumeSemanticContext(
         requirement_priority_lookup=resolved_priority_lookup,
         candidate_profile_understanding=candidate_profile_understanding,
+        offer_signal_context=reportable_terms_context,
         reportable_job_keywords=reportable_job_keywords,
         requirement_reportable_terms_lookup=reportable_terms_context.requirement_terms_lookup,
         source_signal_term_lookup=_build_source_signal_term_lookup(candidate_profile_understanding),
@@ -398,51 +485,6 @@ def _build_source_reportable_term_candidates(
     return build_display_keywords(candidates)
 
 
-def _build_source_highlighted_keywords(
-    *,
-    source_type: str,
-    source_id: str,
-    source_texts: list[str],
-    linked_requirement_ids: list[str],
-    requirement_reportable_terms_lookup: dict[str, list[str]],
-    source_signal_term_lookup: dict[tuple[str, str], list[str]],
-    reportable_job_keywords: list[str],
-) -> list[str]:
-    """Build grounded highlighted keywords for one experience/project source."""
-    source_reportable_candidates = _build_source_reportable_term_candidates(
-        source_type=source_type,
-        source_id=source_id,
-        linked_requirement_ids=linked_requirement_ids,
-        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
-        source_signal_term_lookup=source_signal_term_lookup,
-        reportable_job_keywords=reportable_job_keywords,
-    )
-    if not source_reportable_candidates:
-        return []
-
-    highlighted_keywords: list[str] = []
-    source_signal_terms = source_signal_term_lookup.get((source_type, source_id), [])
-
-    for keyword in _find_keyword_hits(source_reportable_candidates, source_texts):
-        _append_unique(highlighted_keywords, keyword)
-
-    for keyword in source_reportable_candidates:
-        if _source_signal_supports_term(keyword, source_signal_terms):
-            _append_unique(highlighted_keywords, keyword)
-
-    if not highlighted_keywords:
-        for requirement_id in linked_requirement_ids:
-            requirement_terms = requirement_reportable_terms_lookup.get(requirement_id, [])
-            if requirement_terms:
-                _append_unique(highlighted_keywords, requirement_terms[0])
-
-    return _filter_reportable_keyword_hits(
-        highlighted_keywords,
-        reportable_job_keywords,
-        max_items=_MAX_HIGHLIGHTED_KEYWORDS,
-    )
-
-
 def _get_importance_weight(requirement: Requirement | None) -> float:
     """Return the relevance weight of a requirement."""
     if requirement is None:
@@ -455,126 +497,593 @@ def _get_match_weight(requirement_match: RequirementMatch) -> float:
     return _MATCH_RELEVANCE.get(_normalize(requirement_match.match_status), 0.0)
 
 
-def _score_experience(
-    experience: ExperienceEntry,
-    match_result: MatchResult,
-    requirement_lookup: dict[str, Requirement],
-    reportable_job_keywords: list[str],
-    requirement_reportable_terms_lookup: dict[str, list[str]],
-    source_signal_term_lookup: dict[tuple[str, str], list[str]],
-) -> tuple[float, list[str], list[str], list[str]]:
-    """Score one experience entry using grounded match evidence and clean reportable terms."""
-    score = 0.0
-    experience_texts = _collect_text_values(
-        [
-            experience.position_title,
-            *experience.technologies_used,
-            *experience.keywords,
-            *experience.responsibilities,
-            *experience.achievements,
-        ]
-    )
-    linked_requirement_ids = _collect_linked_requirement_ids_for_source(
-        match_result,
-        source_type="experience",
-        source_id=experience.id,
+def _get_priority_alignment_weight(
+    requirement_id: str,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> float:
+    """Translate requirement priority tiers into generation centrality weights."""
+    priority_item = requirement_priority_lookup.get(requirement_id)
+    if priority_item is None:
+        return 0.9
+
+    return {
+        "core": 1.65,
+        "supporting": 1.0,
+        "low_signal": 0.45,
+    }.get(priority_item.priority_tier, 0.9)
+
+
+def _get_requirement_type_alignment_weight(requirement: Requirement | None) -> float:
+    """Give must-have requirements a modest extra centrality boost."""
+    if requirement is None:
+        return 1.0
+    if _normalize(requirement.requirement_type) == "must_have":
+        return 1.12
+    return 1.0
+
+
+def _get_requirement_generation_weight(
+    requirement: Requirement | None,
+    requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem],
+) -> float:
+    """Build one deterministic generation-facing weight for requirement centrality."""
+    if requirement is None:
+        return 0.0
+
+    return (
+        _get_priority_alignment_weight(requirement.id, requirement_priority_lookup)
+        * _get_importance_weight(requirement)
+        * _get_requirement_type_alignment_weight(requirement)
     )
 
+
+def _build_offer_term_alignment_lookup(
+    job_posting: JobPosting,
+    semantic_context: ResumeSemanticContext,
+) -> dict[str, OfferTermAlignment]:
+    """Score each generation-facing offer term by how central it is to the current offer."""
+    requirement_lookup = _build_requirement_lookup(job_posting)
+    top_level_lookup = {
+        _normalize(term) for term in semantic_context.offer_signal_context.top_level_terms
+    }
+    alignment_lookup: dict[str, OfferTermAlignment] = {}
+
+    for index, term in enumerate(semantic_context.reportable_job_keywords):
+        base_score = max(0.3, 0.95 - index * 0.04)
+        if _normalize(term) in top_level_lookup:
+            base_score += 0.6
+        alignment_lookup[term] = OfferTermAlignment(
+            term=term,
+            centrality_score=base_score,
+            linked_requirement_ids=(),
+            top_level_term=_normalize(term) in top_level_lookup,
+        )
+
+    for requirement_id, terms in semantic_context.requirement_reportable_terms_lookup.items():
+        requirement = requirement_lookup.get(requirement_id)
+        weight = _get_requirement_generation_weight(
+            requirement,
+            semantic_context.requirement_priority_lookup,
+        )
+        if weight <= 0:
+            continue
+
+        for term in terms:
+            canonical_term = semantic_context.job_keyword_lookup.get(_normalize(term))
+            if canonical_term is None:
+                continue
+            current_alignment = alignment_lookup.get(canonical_term)
+            if current_alignment is None:
+                continue
+            linked_requirement_ids = list(current_alignment.linked_requirement_ids)
+            if requirement_id not in linked_requirement_ids:
+                linked_requirement_ids.append(requirement_id)
+            alignment_lookup[canonical_term] = OfferTermAlignment(
+                term=current_alignment.term,
+                centrality_score=current_alignment.centrality_score + weight,
+                linked_requirement_ids=tuple(linked_requirement_ids),
+                top_level_term=current_alignment.top_level_term,
+            )
+
+    return alignment_lookup
+
+
+def _text_contains_term(term: str, text: str | None) -> bool:
+    """Check whether one normalized term is explicitly present in the supplied text."""
+    normalized_term = _normalize(term)
+    normalized_text = _normalize(text)
+    if not normalized_term or not normalized_text:
+        return False
+
+    if " " in normalized_term or any(symbol in normalized_term for symbol in "+.#/-"):
+        return normalized_term in normalized_text
+
+    return bool(
+        re.search(
+            rf"(?<![a-z0-9]){re.escape(normalized_term)}(?![a-z0-9])",
+            normalized_text,
+        )
+    )
+
+
+def _find_explicit_offer_term_matches(
+    offer_terms: Iterable[str],
+    evidence_texts: Iterable[str | None],
+    offer_term_alignments: dict[str, OfferTermAlignment],
+) -> list[str]:
+    """Find offer terms that are explicitly grounded in one or more evidence texts."""
+    hits: list[str] = []
+
+    for offer_term in offer_terms:
+        if any(_text_contains_term(offer_term, text) for text in evidence_texts):
+            _append_unique(hits, offer_term)
+
+    return _order_generation_terms(hits, offer_term_alignments)
+
+
+def _collect_source_matched_skill_names(
+    match_result: MatchResult,
+    *,
+    source_type: str,
+    source_id: str,
+) -> list[str]:
+    """Collect matched skill labels already grounded for one source entry."""
+    matched_skill_names: list[str] = []
+
     for requirement_match in match_result.requirement_matches:
-        if experience.id not in requirement_match.matched_experience_ids:
+        if source_type == "experience" and source_id not in requirement_match.matched_experience_ids:
+            continue
+        if source_type == "project" and source_id not in requirement_match.matched_project_ids:
+            continue
+        for skill_name in requirement_match.matched_skill_names:
+            _append_unique(matched_skill_names, skill_name)
+
+    return matched_skill_names
+
+
+def _order_generation_terms(
+    terms: Iterable[str],
+    offer_term_alignments: dict[str, OfferTermAlignment],
+) -> list[str]:
+    """Order generation terms by centrality while preserving deterministic ties."""
+    seen: set[str] = set()
+    ordered_terms: list[str] = []
+
+    for term in terms:
+        normalized_term = _normalize(term)
+        if not normalized_term or normalized_term in seen:
+            continue
+        seen.add(normalized_term)
+        ordered_terms.append(term)
+
+    ordered_terms.sort(
+        key=lambda term: (
+            -offer_term_alignments.get(term, OfferTermAlignment(term, 0.0, (), False)).centrality_score,
+            term.lower(),
+        )
+    )
+    return ordered_terms
+
+
+def _build_source_alignment(
+    *,
+    source_type: Literal["experience", "project"],
+    source_id: str,
+    source_texts: list[str],
+    source_technologies: list[str],
+    match_result: MatchResult,
+    requirement_lookup: dict[str, Requirement],
+    semantic_context: ResumeSemanticContext,
+    offer_term_alignments: dict[str, OfferTermAlignment],
+) -> SourceAlignment:
+    """Build one curated generation alignment for an experience/project source."""
+    linked_requirement_ids = _collect_linked_requirement_ids_for_source(
+        match_result,
+        source_type=source_type,
+        source_id=source_id,
+    )
+    source_signal_terms = semantic_context.source_signal_term_lookup.get((source_type, source_id), [])
+    matched_skill_names = _collect_source_matched_skill_names(
+        match_result,
+        source_type=source_type,
+        source_id=source_id,
+    )
+    source_reportable_candidates = _build_source_reportable_term_candidates(
+        source_type=source_type,
+        source_id=source_id,
+        linked_requirement_ids=linked_requirement_ids,
+        requirement_reportable_terms_lookup=semantic_context.requirement_reportable_terms_lookup,
+        source_signal_term_lookup=semantic_context.source_signal_term_lookup,
+        reportable_job_keywords=semantic_context.reportable_job_keywords,
+    )
+
+    exact_generation_terms = _find_explicit_offer_term_matches(
+        source_reportable_candidates,
+        [*source_texts, *source_signal_terms, *matched_skill_names],
+        offer_term_alignments,
+    )
+    for term in source_reportable_candidates:
+        if _source_signal_supports_term(term, source_signal_terms):
+            _append_unique(exact_generation_terms, term)
+    exact_generation_terms = _order_generation_terms(exact_generation_terms, offer_term_alignments)
+
+    supporting_generation_terms: list[str] = []
+    relation_hits = find_offer_term_relation_hits(
+        offer_terms=semantic_context.reportable_job_keywords,
+        evidence_terms=[*source_technologies, *source_signal_terms, *matched_skill_names],
+    )
+    for relation_hit in relation_hits:
+        if relation_hit.relation_type != "supporting":
+            continue
+        if relation_hit.offer_term in exact_generation_terms:
+            continue
+        _append_unique(supporting_generation_terms, relation_hit.offer_term)
+    supporting_generation_terms = _order_generation_terms(
+        supporting_generation_terms,
+        offer_term_alignments,
+    )
+
+    score = 0.0
+    for requirement_match in match_result.requirement_matches:
+        if source_type == "experience" and source_id not in requirement_match.matched_experience_ids:
+            continue
+        if source_type == "project" and source_id not in requirement_match.matched_project_ids:
             continue
 
         requirement = requirement_lookup.get(requirement_match.requirement_id)
-        weight = _get_importance_weight(requirement) * _get_match_weight(requirement_match)
-        score += weight
+        score += (
+            _get_requirement_generation_weight(
+                requirement,
+                semantic_context.requirement_priority_lookup,
+            )
+            * _get_match_weight(requirement_match)
+        )
 
-    source_reportable_candidates = _build_source_reportable_term_candidates(
-        source_type="experience",
-        source_id=experience.id,
-        linked_requirement_ids=linked_requirement_ids,
-        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
-        source_signal_term_lookup=source_signal_term_lookup,
-        reportable_job_keywords=reportable_job_keywords,
-    )
-    highlighted_keywords = _build_source_highlighted_keywords(
-        source_type="experience",
-        source_id=experience.id,
-        source_texts=experience_texts,
-        linked_requirement_ids=linked_requirement_ids,
-        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
-        source_signal_term_lookup=source_signal_term_lookup,
-        reportable_job_keywords=reportable_job_keywords,
-    )
-    score += len(highlighted_keywords) * 0.35
-    score += len(source_reportable_candidates) * 0.15
+    for term in exact_generation_terms:
+        score += offer_term_alignments.get(term, OfferTermAlignment(term, 0.0, (), False)).centrality_score * 0.72
+    for term in supporting_generation_terms:
+        score += offer_term_alignments.get(term, OfferTermAlignment(term, 0.0, (), False)).centrality_score * 0.28
 
-    return (
-        score,
-        highlighted_keywords,
-        source_reportable_candidates,
-        linked_requirement_ids,
+    bullet_relevance_terms = _order_generation_terms(
+        [
+            *exact_generation_terms,
+            *supporting_generation_terms,
+            *source_reportable_candidates,
+        ],
+        offer_term_alignments,
     )
 
+    return SourceAlignment(
+        source_type=source_type,
+        source_id=source_id,
+        score=score,
+        linked_requirement_ids=tuple(linked_requirement_ids),
+        exact_generation_terms=tuple(exact_generation_terms[:_MAX_HIGHLIGHTED_KEYWORDS]),
+        supporting_generation_terms=tuple(supporting_generation_terms[:_MAX_HIGHLIGHTED_KEYWORDS]),
+        source_signal_terms=tuple(source_signal_terms),
+        matched_skill_names=tuple(matched_skill_names),
+        bullet_relevance_terms=tuple(bullet_relevance_terms[:_MAX_HIGHLIGHTED_KEYWORDS]),
+    )
 
-def _score_project(
-    project: ProjectEntry,
+
+def _build_source_alignment_lookup(
+    candidate_profile: CandidateProfile,
     match_result: MatchResult,
     requirement_lookup: dict[str, Requirement],
-    reportable_job_keywords: list[str],
-    requirement_reportable_terms_lookup: dict[str, list[str]],
-    source_signal_term_lookup: dict[tuple[str, str], list[str]],
-) -> tuple[float, list[str], list[str], list[str]]:
-    """Score one project entry using grounded match evidence and clean reportable terms."""
-    score = 0.0
-    project_texts = _collect_text_values(
-        [
-            project.project_name,
-            project.role,
-            project.description,
-            *project.technologies_used,
-            *project.keywords,
-            *project.outcomes,
+    semantic_context: ResumeSemanticContext,
+    offer_term_alignments: dict[str, OfferTermAlignment],
+    *,
+    source_type: Literal["experience", "project"],
+) -> dict[str, SourceAlignment]:
+    """Precompute curated alignment once per source so both generation modes can reuse it."""
+    alignments: dict[str, SourceAlignment] = {}
+
+    if source_type == "experience":
+        for experience in candidate_profile.experience_entries:
+            alignments[experience.id] = _build_source_alignment(
+                source_type="experience",
+                source_id=experience.id,
+                source_texts=_collect_text_values(
+                    [
+                        experience.position_title,
+                        *experience.technologies_used,
+                        *experience.keywords,
+                        *experience.responsibilities,
+                        *experience.achievements,
+                    ]
+                ),
+                source_technologies=list(experience.technologies_used),
+                match_result=match_result,
+                requirement_lookup=requirement_lookup,
+                semantic_context=semantic_context,
+                offer_term_alignments=offer_term_alignments,
+            )
+    else:
+        for project in candidate_profile.project_entries:
+            alignments[project.id] = _build_source_alignment(
+                source_type="project",
+                source_id=project.id,
+                source_texts=_collect_text_values(
+                    [
+                        project.project_name,
+                        project.role,
+                        project.description,
+                        *project.technologies_used,
+                        *project.keywords,
+                        *project.outcomes,
+                    ]
+                ),
+                source_technologies=list(project.technologies_used),
+                match_result=match_result,
+                requirement_lookup=requirement_lookup,
+                semantic_context=semantic_context,
+                offer_term_alignments=offer_term_alignments,
+            )
+
+    return alignments
+
+
+def _select_top_source_ids(
+    alignments: dict[str, SourceAlignment],
+    *,
+    max_items: int,
+) -> set[str]:
+    """Pick the highest-alignment source IDs for downstream skill selection bonuses."""
+    ordered_ids = [
+        source_id
+        for source_id, alignment in sorted(
+            alignments.items(),
+            key=lambda item: (-item[1].score, item[0]),
+        )
+        if alignment.score > 0
+    ]
+    return set(ordered_ids[:max_items])
+
+
+def _build_skill_selection_candidates(
+    candidate_profile: CandidateProfile,
+    match_result: MatchResult,
+    semantic_context: ResumeSemanticContext,
+    offer_term_alignments: dict[str, OfferTermAlignment],
+    preferred_source_ids: set[str],
+) -> tuple[SkillSelectionCandidate, ...]:
+    """Build alignment-first but grounded skill candidates for the current offer."""
+
+    aggregated: dict[str, dict[str, object]] = {}
+    reportable_offer_terms = list(offer_term_alignments.keys())
+
+    def register_candidate(
+        *,
+        display_label: str,
+        evidence_terms: Iterable[str | None],
+        evidence_source_ids: Iterable[str],
+        matched_requirement_ids: Iterable[str],
+        evidence_kind: str,
+    ) -> None:
+        stripped_label = display_label.strip() if display_label else ""
+        normalized_label = _normalize(stripped_label)
+        if not stripped_label or not normalized_label:
+            return
+
+        cleaned_evidence_terms = _collect_text_values([stripped_label, *list(evidence_terms)])
+        exact_generation_terms = _find_explicit_offer_term_matches(
+            reportable_offer_terms,
+            cleaned_evidence_terms,
+            offer_term_alignments,
+        )
+        supporting_generation_terms: list[str] = []
+        relation_hits = find_offer_term_relation_hits(
+            offer_terms=reportable_offer_terms,
+            evidence_terms=cleaned_evidence_terms,
+        )
+        for relation_hit in relation_hits:
+            if relation_hit.relation_type != "supporting":
+                continue
+            if relation_hit.offer_term in exact_generation_terms:
+                continue
+            _append_unique(supporting_generation_terms, relation_hit.offer_term)
+
+        if not exact_generation_terms and not supporting_generation_terms:
+            return
+
+        existing = aggregated.get(normalized_label)
+        preferred_kind_rank = {
+            "skill_entry": 0,
+            "experience_technology": 1,
+            "project_technology": 2,
+            "matched_skill": 3,
+        }
+        if existing is None:
+            existing = {
+                "label": stripped_label,
+                "label_rank": preferred_kind_rank.get(evidence_kind, 99),
+                "exact_generation_terms": [],
+                "supporting_generation_terms": [],
+                "evidence_source_ids": [],
+                "matched_requirement_ids": [],
+                "evidence_kinds": [],
+            }
+            aggregated[normalized_label] = existing
+        elif preferred_kind_rank.get(evidence_kind, 99) < existing["label_rank"]:
+            existing["label"] = stripped_label
+            existing["label_rank"] = preferred_kind_rank.get(evidence_kind, 99)
+
+        for term in exact_generation_terms:
+            _append_unique(existing["exact_generation_terms"], term)
+        for term in supporting_generation_terms:
+            _append_unique(existing["supporting_generation_terms"], term)
+        for source_id in evidence_source_ids:
+            _append_unique(existing["evidence_source_ids"], source_id)
+        for requirement_id in matched_requirement_ids:
+            _append_unique(existing["matched_requirement_ids"], requirement_id)
+        _append_unique(existing["evidence_kinds"], evidence_kind)
+
+    requirement_matches_by_skill: dict[str, list[str]] = {}
+    source_ids_by_skill: dict[str, list[str]] = {}
+    for requirement_match in match_result.requirement_matches:
+        source_ids = [
+            *requirement_match.matched_experience_ids,
+            *requirement_match.matched_project_ids,
         ]
-    )
-    linked_requirement_ids = _collect_linked_requirement_ids_for_source(
-        match_result,
-        source_type="project",
-        source_id=project.id,
-    )
+        for skill_name in requirement_match.matched_skill_names:
+            normalized_skill = _normalize(skill_name)
+            if not normalized_skill:
+                continue
+            skill_requirements = requirement_matches_by_skill.setdefault(normalized_skill, [])
+            _append_unique(skill_requirements, requirement_match.requirement_id)
+            skill_sources = source_ids_by_skill.setdefault(normalized_skill, [])
+            for source_id in source_ids:
+                _append_unique(skill_sources, source_id)
+
+    for skill_entry in candidate_profile.skill_entries:
+        normalized_aliases = [_normalize(alias) for alias in skill_entry.aliases if alias]
+        normalized_skill_names = {_normalize(skill_entry.name), *normalized_aliases}
+        matched_requirement_ids: list[str] = []
+        evidence_source_ids = list(skill_entry.evidence_sources)
+        for normalized_skill_name in normalized_skill_names:
+            for requirement_id in requirement_matches_by_skill.get(normalized_skill_name, []):
+                _append_unique(matched_requirement_ids, requirement_id)
+            for source_id in source_ids_by_skill.get(normalized_skill_name, []):
+                _append_unique(evidence_source_ids, source_id)
+
+        register_candidate(
+            display_label=skill_entry.name,
+            evidence_terms=[skill_entry.name, *skill_entry.aliases],
+            evidence_source_ids=evidence_source_ids,
+            matched_requirement_ids=matched_requirement_ids,
+            evidence_kind="skill_entry",
+        )
+
+    for experience in candidate_profile.experience_entries:
+        for technology in experience.technologies_used:
+            register_candidate(
+                display_label=technology,
+                evidence_terms=[technology],
+                evidence_source_ids=[experience.id],
+                matched_requirement_ids=[],
+                evidence_kind="experience_technology",
+            )
+
+    for project in candidate_profile.project_entries:
+        for technology in project.technologies_used:
+            register_candidate(
+                display_label=technology,
+                evidence_terms=[technology],
+                evidence_source_ids=[project.id],
+                matched_requirement_ids=[],
+                evidence_kind="project_technology",
+            )
 
     for requirement_match in match_result.requirement_matches:
-        if project.id not in requirement_match.matched_project_ids:
-            continue
+        source_ids = [
+            *requirement_match.matched_experience_ids,
+            *requirement_match.matched_project_ids,
+        ]
+        for skill_name in requirement_match.matched_skill_names:
+            register_candidate(
+                display_label=skill_name,
+                evidence_terms=[skill_name],
+                evidence_source_ids=source_ids,
+                matched_requirement_ids=[requirement_match.requirement_id],
+                evidence_kind="matched_skill",
+            )
 
-        requirement = requirement_lookup.get(requirement_match.requirement_id)
-        weight = _get_importance_weight(requirement) * _get_match_weight(requirement_match)
-        score += weight
+    candidates: list[SkillSelectionCandidate] = []
+    for entry in aggregated.values():
+        exact_generation_terms = _order_generation_terms(
+            entry["exact_generation_terms"],
+            offer_term_alignments,
+        )
+        supporting_generation_terms = _order_generation_terms(
+            entry["supporting_generation_terms"],
+            offer_term_alignments,
+        )
+        evidence_source_ids = list(entry["evidence_source_ids"])
+        matched_requirement_ids = list(entry["matched_requirement_ids"])
+        evidence_kinds = list(entry["evidence_kinds"])
 
-    source_reportable_candidates = _build_source_reportable_term_candidates(
-        source_type="project",
-        source_id=project.id,
-        linked_requirement_ids=linked_requirement_ids,
-        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
-        source_signal_term_lookup=source_signal_term_lookup,
-        reportable_job_keywords=reportable_job_keywords,
+        score = 0.0
+        for term in exact_generation_terms:
+            score += offer_term_alignments.get(term, OfferTermAlignment(term, 0.0, (), False)).centrality_score * 1.08
+        for term in supporting_generation_terms:
+            score += offer_term_alignments.get(term, OfferTermAlignment(term, 0.0, (), False)).centrality_score * 0.52
+        score += sum(0.45 for source_id in evidence_source_ids if source_id in preferred_source_ids)
+        score += sum(0.12 for source_id in evidence_source_ids if source_id not in preferred_source_ids)
+        score += len(matched_requirement_ids) * 0.16
+        if "skill_entry" in evidence_kinds:
+            score += 0.2
+
+        candidates.append(
+            SkillSelectionCandidate(
+                label=str(entry["label"]),
+                score=score,
+                exact_generation_terms=tuple(exact_generation_terms),
+                supporting_generation_terms=tuple(supporting_generation_terms),
+                evidence_source_ids=tuple(evidence_source_ids),
+                matched_requirement_ids=tuple(matched_requirement_ids),
+                evidence_kinds=tuple(evidence_kinds),
+            )
+        )
+
+    candidates.sort(
+        key=lambda candidate: (
+            -candidate.score,
+            -len(candidate.exact_generation_terms),
+            -len(candidate.evidence_source_ids),
+            candidate.label.lower(),
+        )
     )
-    highlighted_keywords = _build_source_highlighted_keywords(
-        source_type="project",
-        source_id=project.id,
-        source_texts=project_texts,
-        linked_requirement_ids=linked_requirement_ids,
-        requirement_reportable_terms_lookup=requirement_reportable_terms_lookup,
-        source_signal_term_lookup=source_signal_term_lookup,
-        reportable_job_keywords=reportable_job_keywords,
-    )
-    score += len(highlighted_keywords) * 0.3
-    score += len(source_reportable_candidates) * 0.12
+    return tuple(candidates)
 
-    return (
-        score,
-        highlighted_keywords,
-        source_reportable_candidates,
-        linked_requirement_ids,
+
+def _build_generation_bundle(
+    candidate_profile: CandidateProfile,
+    job_posting: JobPosting,
+    match_result: MatchResult,
+    semantic_context: ResumeSemanticContext,
+) -> ResumeGenerationBundle:
+    """Build one reusable generation-facing alignment bundle for deterministic and AI paths."""
+    requirement_lookup = _build_requirement_lookup(job_posting)
+    offer_term_alignments = _build_offer_term_alignment_lookup(job_posting, semantic_context)
+    experience_alignments = _build_source_alignment_lookup(
+        candidate_profile,
+        match_result,
+        requirement_lookup,
+        semantic_context,
+        offer_term_alignments,
+        source_type="experience",
+    )
+    project_alignments = _build_source_alignment_lookup(
+        candidate_profile,
+        match_result,
+        requirement_lookup,
+        semantic_context,
+        offer_term_alignments,
+        source_type="project",
+    )
+    preferred_source_ids = {
+        *_select_top_source_ids(experience_alignments, max_items=_MAX_SELECTED_EXPERIENCES),
+        *_select_top_source_ids(project_alignments, max_items=_MAX_SELECTED_PROJECTS),
+    }
+    skill_candidates = _build_skill_selection_candidates(
+        candidate_profile,
+        match_result,
+        semantic_context,
+        offer_term_alignments,
+        preferred_source_ids,
+    )
+    summary_focus_terms = tuple(
+        candidate.label
+        for candidate in skill_candidates
+        if candidate.exact_generation_terms
+    )[:4] or tuple(candidate.label for candidate in skill_candidates[:4])
+
+    return ResumeGenerationBundle(
+        offer_term_alignments=offer_term_alignments,
+        experience_alignments=experience_alignments,
+        project_alignments=project_alignments,
+        skill_candidates=skill_candidates,
+        summary_focus_terms=summary_focus_terms,
     )
 
 
@@ -604,56 +1113,27 @@ def _select_top_bullets(
 
 def _build_resume_experience_entries(
     candidate_profile: CandidateProfile,
-    match_result: MatchResult,
-    requirement_lookup: dict[str, Requirement],
-    reportable_job_keywords: list[str],
-    requirement_reportable_terms_lookup: dict[str, list[str]],
-    source_signal_term_lookup: dict[tuple[str, str], list[str]],
+    generation_bundle: ResumeGenerationBundle,
 ) -> tuple[list[ResumeExperienceEntry], dict[str, list[str]]]:
     """Select and format the most relevant experience entries for the draft CV."""
-    scored_experiences: list[
-        tuple[float, int, ExperienceEntry, list[str], list[str], list[str]]
-    ] = []
+    scored_experiences: list[tuple[float, int, ExperienceEntry, SourceAlignment]] = []
 
     for index, experience in enumerate(candidate_profile.experience_entries):
-        score, highlighted_keywords, source_reportable_candidates, linked_requirement_ids = _score_experience(
-            experience,
-            match_result,
-            requirement_lookup,
-            reportable_job_keywords,
-            requirement_reportable_terms_lookup,
-            source_signal_term_lookup,
-        )
-        if score <= 0:
+        alignment = generation_bundle.experience_alignments.get(experience.id)
+        if alignment is None or alignment.score <= 0:
             continue
-        scored_experiences.append(
-            (
-                score,
-                index,
-                experience,
-                highlighted_keywords,
-                source_reportable_candidates,
-                linked_requirement_ids,
-            )
-        )
+        scored_experiences.append((alignment.score, index, experience, alignment))
 
     scored_experiences.sort(key=lambda item: (-item[0], item[1]))
 
     selected_entries: list[ResumeExperienceEntry] = []
     selection_meta: dict[str, list[str]] = {}
 
-    for (
-        _,
-        _,
-        experience,
-        highlighted_keywords,
-        source_reportable_candidates,
-        linked_requirement_ids,
-    ) in scored_experiences[:_MAX_SELECTED_EXPERIENCES]:
+    for _, _, experience, alignment in scored_experiences[:_MAX_SELECTED_EXPERIENCES]:
         bullet_candidates = [*experience.achievements, *experience.responsibilities]
         bullet_points = _select_top_bullets(
             bullet_candidates,
-            highlighted_keywords or source_reportable_candidates,
+            list(alignment.bullet_relevance_terms),
             fallback_limit=4,
         )
 
@@ -668,66 +1148,37 @@ def _build_resume_experience_entries(
                     experience.is_current,
                 ),
                 bullet_points=bullet_points,
-                highlighted_keywords=highlighted_keywords,
+                highlighted_keywords=list(alignment.exact_generation_terms),
             )
         )
-        selection_meta[experience.id] = linked_requirement_ids
+        selection_meta[experience.id] = list(alignment.linked_requirement_ids)
 
     return selected_entries, selection_meta
 
 
 def _build_resume_project_entries(
     candidate_profile: CandidateProfile,
-    match_result: MatchResult,
-    requirement_lookup: dict[str, Requirement],
-    reportable_job_keywords: list[str],
-    requirement_reportable_terms_lookup: dict[str, list[str]],
-    source_signal_term_lookup: dict[tuple[str, str], list[str]],
+    generation_bundle: ResumeGenerationBundle,
 ) -> tuple[list[ResumeProjectEntry], dict[str, list[str]]]:
     """Select and format the most relevant project entries for the draft CV."""
-    scored_projects: list[
-        tuple[float, int, ProjectEntry, list[str], list[str], list[str]]
-    ] = []
+    scored_projects: list[tuple[float, int, ProjectEntry, SourceAlignment]] = []
 
     for index, project in enumerate(candidate_profile.project_entries):
-        score, highlighted_keywords, source_reportable_candidates, linked_requirement_ids = _score_project(
-            project,
-            match_result,
-            requirement_lookup,
-            reportable_job_keywords,
-            requirement_reportable_terms_lookup,
-            source_signal_term_lookup,
-        )
-        if score <= 0:
+        alignment = generation_bundle.project_alignments.get(project.id)
+        if alignment is None or alignment.score <= 0:
             continue
-        scored_projects.append(
-            (
-                score,
-                index,
-                project,
-                highlighted_keywords,
-                source_reportable_candidates,
-                linked_requirement_ids,
-            )
-        )
+        scored_projects.append((alignment.score, index, project, alignment))
 
     scored_projects.sort(key=lambda item: (-item[0], item[1]))
 
     selected_entries: list[ResumeProjectEntry] = []
     selection_meta: dict[str, list[str]] = {}
 
-    for (
-        _,
-        _,
-        project,
-        highlighted_keywords,
-        source_reportable_candidates,
-        linked_requirement_ids,
-    ) in scored_projects[:_MAX_SELECTED_PROJECTS]:
+    for _, _, project, alignment in scored_projects[:_MAX_SELECTED_PROJECTS]:
         bullet_candidates = [*project.outcomes, project.description]
         bullet_points = _select_top_bullets(
             bullet_candidates,
-            highlighted_keywords or source_reportable_candidates,
+            list(alignment.bullet_relevance_terms),
             fallback_limit=3,
         )
 
@@ -736,91 +1187,34 @@ def _build_resume_project_entries(
                 source_project_id=project.id,
                 project_name=project.project_name,
                 role=project.role,
+                link=str(project.link) if project.link else None,
                 bullet_points=bullet_points,
-                highlighted_keywords=highlighted_keywords,
+                highlighted_keywords=list(alignment.exact_generation_terms),
             )
         )
-        selection_meta[project.id] = linked_requirement_ids
+        selection_meta[project.id] = list(alignment.linked_requirement_ids)
 
     return selected_entries, selection_meta
 
 
 def _build_selected_skills(
-    candidate_profile: CandidateProfile,
-    selected_experience_entries: list[ResumeExperienceEntry],
-    selected_project_entries: list[ResumeProjectEntry],
-    match_result: MatchResult,
-    requirement_lookup: dict[str, Requirement],
-    reportable_job_keywords: list[str],
+    generation_bundle: ResumeGenerationBundle,
 ) -> list[str]:
-    """Select the strongest grounded skills for the tailored draft CV."""
-    skill_scores: dict[str, float] = {}
-    first_seen: dict[str, int] = {}
-    normalized_reportable_keywords = {_normalize(keyword) for keyword in reportable_job_keywords}
+    """Select top aligned, sufficiently grounded skills for the tailored draft CV."""
+    return [
+        candidate.label
+        for candidate in generation_bundle.skill_candidates[:_MAX_SELECTED_SKILLS]
+    ]
 
-    def register_skill(skill_name: str, weight: float, order: int) -> None:
-        normalized_skill = _normalize(skill_name)
-        if not normalized_skill:
-            return
-        skill_scores[skill_name] = skill_scores.get(skill_name, 0.0) + weight
-        first_seen.setdefault(skill_name, order)
 
-    for requirement_match in match_result.requirement_matches:
-        requirement = requirement_lookup.get(requirement_match.requirement_id)
-        weight = _get_importance_weight(requirement) * _get_match_weight(requirement_match)
-        for skill_name in requirement_match.matched_skill_names:
-            register_skill(skill_name, weight + 1.0, len(first_seen))
+def _select_soft_skill_entries(candidate_profile: CandidateProfile) -> list[str]:
+    """Carry soft skills into the draft in the same user-facing order as the profile."""
+    return [value.strip() for value in candidate_profile.soft_skill_entries if value and value.strip()]
 
-    selected_experience_lookup = {
-        experience_entry.source_experience_id for experience_entry in selected_experience_entries
-    }
-    selected_project_lookup = {
-        project_entry.source_project_id for project_entry in selected_project_entries
-    }
-    for index, skill_entry in enumerate(candidate_profile.skill_entries):
-        selected_evidence_sources = {
-            evidence_source
-            for evidence_source in skill_entry.evidence_sources
-            if evidence_source in selected_experience_lookup or evidence_source in selected_project_lookup
-        }
-        normalized_skill_names = {
-            _normalize(skill_entry.name),
-            *[_normalize(alias) for alias in skill_entry.aliases],
-        }
-        explicit_offer_alignment = any(
-            normalized_skill_name in normalized_reportable_keywords
-            for normalized_skill_name in normalized_skill_names
-            if normalized_skill_name
-        )
-        evidence_bonus = 0.9 if selected_evidence_sources else 0.0
-        offer_alignment_bonus = 0.6 if explicit_offer_alignment else 0.0
-        if selected_evidence_sources or explicit_offer_alignment:
-            register_skill(
-                skill_entry.name,
-                evidence_bonus + offer_alignment_bonus,
-                index,
-            )
 
-    for experience in candidate_profile.experience_entries:
-        if experience.id not in selected_experience_lookup:
-            continue
-        for technology in experience.technologies_used:
-            normalized_technology = _normalize(technology)
-            if normalized_technology in normalized_reportable_keywords:
-                register_skill(technology, 0.7, len(first_seen))
-    for project in candidate_profile.project_entries:
-        if project.id not in selected_project_lookup:
-            continue
-        for technology in project.technologies_used:
-            normalized_technology = _normalize(technology)
-            if normalized_technology in normalized_reportable_keywords:
-                register_skill(technology, 0.5, len(first_seen))
-
-    ordered_skills = sorted(
-        skill_scores.items(),
-        key=lambda item: (-item[1], first_seen[item[0]]),
-    )
-    return [skill_name for skill_name, _ in ordered_skills[:_MAX_SELECTED_SKILLS]]
+def _select_interest_entries(candidate_profile: CandidateProfile) -> list[str]:
+    """Carry declared interests into the draft in the same user-facing order as the profile."""
+    return [value.strip() for value in candidate_profile.interest_entries if value and value.strip()]
 
 
 def _format_education_entry(entry: dict[str, str | bool | None]) -> str:
@@ -891,20 +1285,14 @@ def _select_certificates(candidate_profile: CandidateProfile) -> list[str]:
 def _build_professional_summary(
     candidate_profile: CandidateProfile,
     job_posting: JobPosting,
-    selected_skills: list[str],
+    generation_bundle: ResumeGenerationBundle,
 ) -> str | None:
     """Build a grounded, minimally tailored summary from trusted profile content."""
-    base_summary = candidate_profile.professional_summary_base.strip()
+    base_summary = (candidate_profile.professional_summary_base or "").strip()
     if not base_summary:
         return None
 
-    relevant_skills = ", ".join(selected_skills[:4])
-    if not relevant_skills:
-        return base_summary
-
-    return (
-        f"{base_summary} Most relevant for the {job_posting.title} role: {relevant_skills}."
-    )
+    return base_summary
 
 
 def _collect_candidate_understanding_grounding_texts(
@@ -1046,7 +1434,7 @@ def _build_resume_header(candidate_profile: CandidateProfile, job_posting: JobPo
 
     return ResumeHeader(
         full_name=personal_info.full_name,
-        professional_headline=job_posting.title,
+        professional_headline=None,
         email=personal_info.email,
         phone=personal_info.phone,
         location=personal_info.location,
@@ -1085,6 +1473,86 @@ def _build_keyword_usage(
         ],
     ]
     return _find_keyword_hits(job_keywords, searchable_texts)
+
+
+def _order_generation_keywords(
+    keywords: Iterable[str],
+    generation_bundle: ResumeGenerationBundle,
+) -> list[str]:
+    """Order used/selected offer keywords by the same generation-facing centrality model."""
+    return _order_generation_terms(keywords, generation_bundle.offer_term_alignments)
+
+
+def _build_generation_debug_payload(
+    candidate_profile: CandidateProfile,
+    job_posting: JobPosting,
+    resume_draft: ResumeDraft,
+    generation_bundle: ResumeGenerationBundle,
+    reportable_job_keywords: list[str],
+    sidecar_trace: dict[str, object],
+) -> dict[str, object]:
+    """Expose a backend-facing debug breakdown for ETAP 2 manual verification."""
+    selected_skill_lookup = {
+        _normalize(candidate.label): candidate
+        for candidate in generation_bundle.skill_candidates
+    }
+    selected_experience_alignment = [
+        {
+            **generation_bundle.experience_alignments[entry.source_experience_id].to_debug_dict(),
+            "position_title": entry.position_title,
+            "highlighted_keywords": list(entry.highlighted_keywords),
+            "relevance_note": entry.relevance_note,
+        }
+        for entry in resume_draft.selected_experience_entries
+        if entry.source_experience_id in generation_bundle.experience_alignments
+    ]
+    selected_project_alignment = [
+        {
+            **generation_bundle.project_alignments[entry.source_project_id].to_debug_dict(),
+            "project_name": entry.project_name,
+            "highlighted_keywords": list(entry.highlighted_keywords),
+            "relevance_note": entry.relevance_note,
+        }
+        for entry in resume_draft.selected_project_entries
+        if entry.source_project_id in generation_bundle.project_alignments
+    ]
+
+    return {
+        "semantic_handoff": sidecar_trace,
+        "offer_term_alignments": [
+            alignment.to_debug_dict()
+            for alignment in sorted(
+                generation_bundle.offer_term_alignments.values(),
+                key=lambda item: (-item.centrality_score, item.term.lower()),
+            )
+        ],
+        "selected_skills": [
+            selected_skill_lookup[_normalize(skill_name)].to_debug_dict()
+            for skill_name in resume_draft.selected_skills
+            if _normalize(skill_name) in selected_skill_lookup
+        ],
+        "selected_skill_candidates": [
+            candidate.to_debug_dict()
+            for candidate in generation_bundle.skill_candidates[:_MAX_SELECTED_SKILLS]
+        ],
+        "professional_summary": {
+            "base_summary": candidate_profile.professional_summary_base,
+            "target_job_title": job_posting.title,
+            "summary_focus_terms": list(generation_bundle.summary_focus_terms),
+            "selected_skills": list(resume_draft.selected_skills),
+            "final_professional_summary": resume_draft.professional_summary,
+        },
+        "selected_experience_entries": selected_experience_alignment,
+        "selected_project_entries": selected_project_alignment,
+        "keyword_alignment": {
+            "generation_universe": list(reportable_job_keywords),
+            "selected_keywords": list(resume_draft.selected_keywords),
+            "used_keywords": list(resume_draft.keyword_usage),
+            "unused_keywords": [
+                keyword for keyword in reportable_job_keywords if keyword not in resume_draft.keyword_usage
+            ],
+        },
+    }
 
 
 def _build_used_elements(
@@ -1453,39 +1921,26 @@ def _build_rule_based_resume_draft(
     job_posting: JobPosting,
     match_result: MatchResult,
     semantic_context: ResumeSemanticContext,
+    generation_bundle: ResumeGenerationBundle,
 ) -> ResumeDraft:
     """Build the existing deterministic ResumeDraft used as a safe fallback."""
-    requirement_lookup = _build_requirement_lookup(job_posting)
-
     selected_experience_entries, _ = _build_resume_experience_entries(
         candidate_profile,
-        match_result,
-        requirement_lookup,
-        semantic_context.reportable_job_keywords,
-        semantic_context.requirement_reportable_terms_lookup,
-        semantic_context.source_signal_term_lookup,
+        generation_bundle,
     )
     selected_project_entries, _ = _build_resume_project_entries(
         candidate_profile,
-        match_result,
-        requirement_lookup,
-        semantic_context.reportable_job_keywords,
-        semantic_context.requirement_reportable_terms_lookup,
-        semantic_context.source_signal_term_lookup,
+        generation_bundle,
     )
-    selected_skills = _build_selected_skills(
-        candidate_profile,
-        selected_experience_entries,
-        selected_project_entries,
-        match_result,
-        requirement_lookup,
-        semantic_context.reportable_job_keywords,
-    )
-    keyword_usage = _build_keyword_usage(
-        semantic_context.reportable_job_keywords,
-        selected_skills,
-        selected_experience_entries,
-        selected_project_entries,
+    selected_skills = _build_selected_skills(generation_bundle)
+    keyword_usage = _order_generation_keywords(
+        _build_keyword_usage(
+            semantic_context.reportable_job_keywords,
+            selected_skills,
+            selected_experience_entries,
+            selected_project_entries,
+        ),
+        generation_bundle,
     )
 
     return ResumeDraft(
@@ -1500,9 +1955,11 @@ def _build_rule_based_resume_draft(
         professional_summary=_build_professional_summary(
             candidate_profile,
             job_posting,
-            selected_skills,
+            generation_bundle,
         ),
         selected_skills=selected_skills,
+        selected_soft_skill_entries=_select_soft_skill_entries(candidate_profile),
+        selected_interest_entries=_select_interest_entries(candidate_profile),
         selected_experience_entries=selected_experience_entries,
         selected_project_entries=selected_project_entries,
         selected_education_entries=_select_education(candidate_profile),
@@ -1519,10 +1976,11 @@ def _build_ai_assisted_resume_draft(
     match_result: MatchResult,
     ai_output: OpenAIResumeTailoringOutput,
     semantic_context: ResumeSemanticContext,
+    generation_bundle: ResumeGenerationBundle,
 ) -> tuple[ResumeDraft, dict[str, list[str]]]:
     """Hydrate, validate and constrain the AI output into the public ResumeDraft contract."""
-    requirement_lookup = _build_requirement_lookup(job_posting)
     candidate_skill_lookup = _build_candidate_skill_lookup(candidate_profile)
+    aligned_skill_lookup = generation_bundle.build_aligned_skill_lookup()
     candidate_understanding_grounding_texts = _collect_candidate_understanding_grounding_texts(
         semantic_context.candidate_profile_understanding,
     )
@@ -1553,6 +2011,7 @@ def _build_ai_assisted_resume_draft(
             ignored_unknown_references = True
             continue
 
+        alignment = generation_bundle.experience_alignments.get(source_entry.id)
         source_lines = [*source_entry.achievements, *source_entry.responsibilities]
         source_highlights = _filter_allowed_values(
             selection.source_highlights,
@@ -1566,37 +2025,15 @@ def _build_ai_assisted_resume_draft(
             *source_lines,
             *source_highlights,
         ]
-        linked_requirement_ids = _collect_linked_requirement_ids_for_source(
-            match_result,
-            source_type="experience",
-            source_id=source_entry.id,
+        source_highlighted_fallback = (
+            list(alignment.exact_generation_terms) if alignment is not None else []
         )
-        source_reportable_candidates = _build_source_reportable_term_candidates(
-            source_type="experience",
-            source_id=source_entry.id,
-            linked_requirement_ids=linked_requirement_ids,
-            requirement_reportable_terms_lookup=semantic_context.requirement_reportable_terms_lookup,
-            source_signal_term_lookup=semantic_context.source_signal_term_lookup,
-            reportable_job_keywords=semantic_context.reportable_job_keywords,
-        )
-        source_highlighted_fallback = _build_source_highlighted_keywords(
-            source_type="experience",
-            source_id=source_entry.id,
-            source_texts=[
-                source_entry.position_title,
-                *source_entry.technologies_used,
-                *source_entry.keywords,
-                *source_entry.responsibilities,
-                *source_entry.achievements,
-            ],
-            linked_requirement_ids=linked_requirement_ids,
-            requirement_reportable_terms_lookup=semantic_context.requirement_reportable_terms_lookup,
-            source_signal_term_lookup=semantic_context.source_signal_term_lookup,
-            reportable_job_keywords=semantic_context.reportable_job_keywords,
+        source_relevance_terms = (
+            list(alignment.bullet_relevance_terms) if alignment is not None else source_highlighted_fallback
         )
         highlighted_keywords = _filter_allowed_values(
             selection.highlighted_keywords,
-            _build_allowed_value_lookup(source_reportable_candidates),
+            _build_allowed_value_lookup(source_highlighted_fallback),
             limit=6,
         )
         bullet_points = _filter_grounded_generated_items(
@@ -1608,9 +2045,7 @@ def _build_ai_assisted_resume_draft(
         if not bullet_points or not source_highlights:
             bullet_points = _select_top_bullets(
                 source_lines,
-                highlighted_keywords
-                or source_highlighted_fallback
-                or source_reportable_candidates,
+                highlighted_keywords or source_relevance_terms,
                 fallback_limit=4,
             )
             source_highlights = source_highlights or _clean_string_list(bullet_points, limit=3)
@@ -1630,7 +2065,6 @@ def _build_ai_assisted_resume_draft(
                 highlighted_keywords=(
                     highlighted_keywords
                     or source_highlighted_fallback
-                    or source_reportable_candidates[:_MAX_HIGHLIGHTED_KEYWORDS]
                 ),
                 relevance_note=(selection.relevance_note or "").strip() or None,
                 source_highlights=source_highlights,
@@ -1644,6 +2078,7 @@ def _build_ai_assisted_resume_draft(
             ignored_unknown_references = True
             continue
 
+        alignment = generation_bundle.project_alignments.get(source_entry.id)
         source_lines = [*source_entry.outcomes, source_entry.description]
         source_highlights = _filter_allowed_values(
             selection.source_highlights,
@@ -1658,38 +2093,15 @@ def _build_ai_assisted_resume_draft(
             *source_lines,
             *source_highlights,
         ]
-        linked_requirement_ids = _collect_linked_requirement_ids_for_source(
-            match_result,
-            source_type="project",
-            source_id=source_entry.id,
+        source_highlighted_fallback = (
+            list(alignment.exact_generation_terms) if alignment is not None else []
         )
-        source_reportable_candidates = _build_source_reportable_term_candidates(
-            source_type="project",
-            source_id=source_entry.id,
-            linked_requirement_ids=linked_requirement_ids,
-            requirement_reportable_terms_lookup=semantic_context.requirement_reportable_terms_lookup,
-            source_signal_term_lookup=semantic_context.source_signal_term_lookup,
-            reportable_job_keywords=semantic_context.reportable_job_keywords,
-        )
-        source_highlighted_fallback = _build_source_highlighted_keywords(
-            source_type="project",
-            source_id=source_entry.id,
-            source_texts=[
-                source_entry.project_name,
-                source_entry.role,
-                source_entry.description,
-                *source_entry.technologies_used,
-                *source_entry.keywords,
-                *source_entry.outcomes,
-            ],
-            linked_requirement_ids=linked_requirement_ids,
-            requirement_reportable_terms_lookup=semantic_context.requirement_reportable_terms_lookup,
-            source_signal_term_lookup=semantic_context.source_signal_term_lookup,
-            reportable_job_keywords=semantic_context.reportable_job_keywords,
+        source_relevance_terms = (
+            list(alignment.bullet_relevance_terms) if alignment is not None else source_highlighted_fallback
         )
         highlighted_keywords = _filter_allowed_values(
             selection.highlighted_keywords,
-            _build_allowed_value_lookup(source_reportable_candidates),
+            _build_allowed_value_lookup(source_highlighted_fallback),
             limit=6,
         )
         bullet_points = _filter_grounded_generated_items(
@@ -1701,9 +2113,7 @@ def _build_ai_assisted_resume_draft(
         if not bullet_points or not source_highlights:
             bullet_points = _select_top_bullets(
                 [item for item in source_lines if item],
-                highlighted_keywords
-                or source_highlighted_fallback
-                or source_reportable_candidates,
+                highlighted_keywords or source_relevance_terms,
                 fallback_limit=3,
             )
             source_highlights = source_highlights or _clean_string_list(bullet_points, limit=3)
@@ -1714,11 +2124,11 @@ def _build_ai_assisted_resume_draft(
                 source_project_id=source_entry.id,
                 project_name=source_entry.project_name,
                 role=source_entry.role,
+                link=str(source_entry.link) if source_entry.link else None,
                 bullet_points=bullet_points,
                 highlighted_keywords=(
                     highlighted_keywords
                     or source_highlighted_fallback
-                    or source_reportable_candidates[:_MAX_HIGHLIGHTED_KEYWORDS]
                 ),
                 relevance_note=(selection.relevance_note or "").strip() or None,
                 source_highlights=source_highlights,
@@ -1727,20 +2137,13 @@ def _build_ai_assisted_resume_draft(
 
     selected_skills = _filter_allowed_values(
         ai_output.selected_skills,
-        candidate_skill_lookup,
+        aligned_skill_lookup,
         limit=_MAX_SELECTED_SKILLS,
     )
     if len(selected_skills) < len(_clean_string_list(ai_output.selected_skills)):
         filtered_unknown_skills = True
     if not selected_skills:
-        selected_skills = _build_selected_skills(
-            candidate_profile,
-            selected_experience_entries,
-            selected_project_entries,
-            match_result,
-            requirement_lookup,
-            semantic_context.reportable_job_keywords,
-        )
+        selected_skills = _build_selected_skills(generation_bundle)
 
     selected_keywords = _filter_allowed_values(
         ai_output.selected_keywords,
@@ -1773,11 +2176,18 @@ def _build_ai_assisted_resume_draft(
     if not selected_certificate_entries:
         selected_certificate_entries = _select_certificates(candidate_profile)
 
-    keyword_usage = _build_keyword_usage(
-        semantic_context.reportable_job_keywords,
-        selected_skills,
-        selected_experience_entries,
-        selected_project_entries,
+    keyword_usage = _order_generation_keywords(
+        _build_keyword_usage(
+            semantic_context.reportable_job_keywords,
+            selected_skills,
+            selected_experience_entries,
+            selected_project_entries,
+        ),
+        generation_bundle,
+    )
+    selected_keywords = _order_generation_keywords(
+        [keyword for keyword in selected_keywords if keyword in keyword_usage],
+        generation_bundle,
     )
     if not selected_keywords:
         selected_keywords = keyword_usage
@@ -1785,7 +2195,7 @@ def _build_ai_assisted_resume_draft(
     fallback_professional_summary = _build_professional_summary(
         candidate_profile,
         job_posting,
-        selected_skills,
+        generation_bundle,
     )
     fallback_fit_summary = _build_fit_summary(
         candidate_profile,
@@ -1897,6 +2307,8 @@ def _build_ai_assisted_resume_draft(
         fit_summary=fit_summary,
         professional_summary=professional_summary,
         selected_skills=selected_skills,
+        selected_soft_skill_entries=_select_soft_skill_entries(candidate_profile),
+        selected_interest_entries=_select_interest_entries(candidate_profile),
         selected_experience_entries=selected_experience_entries,
         selected_project_entries=selected_project_entries,
         selected_education_entries=selected_education_entries,
@@ -1916,16 +2328,35 @@ def generate_resume_artifacts(
     *,
     requirement_priority_lookup: dict[str, OpenAIRequirementPriorityItem] | None = None,
     candidate_profile_understanding: CandidateProfileUnderstanding | None = None,
+    requirement_priority_lookup_provided: bool = False,
+    candidate_profile_understanding_provided: bool = False,
+    matching_handoff_supplied: bool = False,
 ) -> dict[str, object]:
     """Generate a truthful-first ResumeDraft and ChangeReport from saved inputs."""
     resolved_requirement_priority_lookup = requirement_priority_lookup or {}
     resolved_candidate_profile_understanding = candidate_profile_understanding
+    reused_sidecars: list[str] = []
+    locally_computed_sidecars: list[str] = []
+
+    requirement_priority_lookup_was_supplied = (
+        requirement_priority_lookup_provided or requirement_priority_lookup is not None
+    )
+    candidate_profile_understanding_was_supplied = (
+        candidate_profile_understanding_provided or candidate_profile_understanding is not None
+    )
 
     if _has_configured_openai_api_key():
-        if not resolved_requirement_priority_lookup:
+        if not requirement_priority_lookup_was_supplied:
             resolved_requirement_priority_lookup = get_requirement_priority_lookup(job_posting)
-        if resolved_candidate_profile_understanding is None:
+            locally_computed_sidecars.append("requirement_priority_lookup")
+        if not candidate_profile_understanding_was_supplied:
             resolved_candidate_profile_understanding = get_candidate_profile_understanding(candidate_profile)
+            locally_computed_sidecars.append("candidate_profile_understanding")
+
+    if requirement_priority_lookup_was_supplied:
+        reused_sidecars.append("requirement_priority_lookup")
+    if candidate_profile_understanding_was_supplied:
+        reused_sidecars.append("candidate_profile_understanding")
 
     semantic_context = _build_resume_semantic_context(
         job_posting,
@@ -1945,6 +2376,12 @@ def generate_resume_artifacts(
         requirement_priority_lookup=semantic_context.requirement_priority_lookup,
         candidate_profile_understanding=semantic_context.candidate_profile_understanding,
     )
+    generation_bundle = _build_generation_bundle(
+        candidate_profile,
+        job_posting,
+        effective_match_result,
+        semantic_context,
+    )
 
     generation_notes: list[str] = []
     fallback_reason: ResumeFallbackReason | None = None
@@ -1957,6 +2394,34 @@ def generate_resume_artifacts(
             candidate_profile_understanding=semantic_context.candidate_profile_understanding,
             reportable_offer_terms=semantic_context.reportable_job_keywords,
             requirement_reportable_terms_lookup=semantic_context.requirement_reportable_terms_lookup,
+            generation_bundle={
+                "offer_term_alignments": [
+                    alignment.to_debug_dict()
+                    for alignment in sorted(
+                        generation_bundle.offer_term_alignments.values(),
+                        key=lambda item: (-item.centrality_score, item.term.lower()),
+                    )
+                ],
+                "summary_focus_terms": list(generation_bundle.summary_focus_terms),
+                "selected_skill_candidates": [
+                    candidate.to_debug_dict()
+                    for candidate in generation_bundle.skill_candidates[:_MAX_SELECTED_SKILLS]
+                ],
+                "experience_alignment": [
+                    alignment.to_debug_dict()
+                    for alignment in sorted(
+                        generation_bundle.experience_alignments.values(),
+                        key=lambda item: (-item.score, item.source_id),
+                    )[:_MAX_SELECTED_EXPERIENCES]
+                ],
+                "project_alignment": [
+                    alignment.to_debug_dict()
+                    for alignment in sorted(
+                        generation_bundle.project_alignments.values(),
+                        key=lambda item: (-item.score, item.source_id),
+                    )[:_MAX_SELECTED_PROJECTS]
+                ],
+            },
         )
         resume_draft, ai_notes = _build_ai_assisted_resume_draft(
             candidate_profile,
@@ -1964,6 +2429,7 @@ def generate_resume_artifacts(
             effective_match_result,
             ai_output,
             semantic_context,
+            generation_bundle,
         )
         generation_mode = ResumeGenerationMode.OPENAI_STRUCTURED
         for note in ai_notes["generation_notes"]:
@@ -1994,6 +2460,7 @@ def generate_resume_artifacts(
             job_posting,
             effective_match_result,
             semantic_context,
+            generation_bundle,
         )
         generation_mode = ResumeGenerationMode.RULE_BASED_FALLBACK
         logger.warning(
@@ -2020,4 +2487,17 @@ def generate_resume_artifacts(
         "match_result_source": match_result_source,
         "fallback_reason": fallback_reason,
         "generation_notes": generation_notes,
+        "offer_signal_debug": semantic_context.offer_signal_context.to_debug_payload(),
+        "generation_debug": _build_generation_debug_payload(
+            candidate_profile,
+            job_posting,
+            resume_draft,
+            generation_bundle,
+            semantic_context.reportable_job_keywords,
+            {
+                "matching_handoff_supplied": matching_handoff_supplied,
+                "reused_sidecars": reused_sidecars,
+                "locally_computed_sidecars": locally_computed_sidecars,
+            },
+        ),
     }
