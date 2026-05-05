@@ -2,9 +2,28 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
 .vscode/
 .pytest_cache/
 data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.db-*
+data/*.sqlite-*
+data/*.sqlite3-*
 frontend/node_modules/
 frontend/dist/
 data/resume_agent.db
+
+# Local Typst render outputs and uploaded photo assets.
+artifacts/
+
+# Local/private developer photo asset; keep templates/cv_one_page.typ tracked.
+templates/assets/profile.jpg
+
+# Local tool caches and coverage output.
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/

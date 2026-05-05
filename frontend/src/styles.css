@@ -281,9 +281,13 @@ pre {
 }
 
 .ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid #cbd5e1;
   background: #ffffff;
   color: #0f172a;
+  text-decoration: none;
 }
 
 .ghost-button:hover:not(:disabled) {
@@ -338,6 +342,16 @@ pre {
 .message.error {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.document-error-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.document-error-panel p,
+.document-error-panel ul {
+  margin: 0;
 }
 
 .result-panel {
@@ -1084,6 +1098,44 @@ pre {
   gap: 20px;
 }
 
+.document-preview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.pdf-preview-shell {
+  min-height: 620px;
+  border: 1px solid #d8e2ee;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.pdf-preview-frame {
+  display: block;
+  width: 100%;
+  height: 620px;
+  border: 0;
+  background: #ffffff;
+}
+
+.pdf-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 10px;
+  border-top: 1px solid #d8e2ee;
+  background: #ffffff;
+}
+
+.analysis-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .document-panel-body {
   max-height: 760px;
   overflow-y: auto;
@@ -1226,6 +1278,7 @@ pre {
 }
 
 @media (max-width: 1024px) {
+  .document-preview-grid,
   .document-results-grid,
   .resume-report-summary-grid,
   .match-source-status-grid {
@@ -1304,8 +1357,79 @@ pre {
   line-height: 1.45;
 }
 
+.final-editor,
+.final-editor-section,
+.final-editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.final-editor {
+  margin-top: 18px;
+}
+
+.final-editor-section {
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.final-editor-section .record-card {
+  background: #ffffff;
+}
+
+.manual-editor-source {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.manual-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.manual-autosave-prompt {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  background: #eff6ff;
+}
+
+.manual-autosave-prompt h4 {
+  margin: 0 0 6px;
+}
+
+.char-counter {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.char-counter.warning {
+  color: #92400e;
+}
+
+.char-counter.error {
+  color: #b91c1c;
+}
+
 @media (max-width: 900px) {
   .resume-actions {
     grid-template-columns: 1fr;
+  }
+
+  .manual-autosave-prompt {
+    flex-direction: column;
   }
 }

@@ -252,13 +252,13 @@ def _build_request() -> MatchAnalysisRequest:
         {
             "candidate_profile": {
                 "personal_info": {
-                    "full_name": "Filip Kolęda",
-                    "email": "filip@example.com",
-                    "phone": "+48 123 456 789",
-                    "linkedin_url": "https://www.linkedin.com/in/filipkoleda",
-                    "github_url": "https://github.com/filipkoleda",
-                    "portfolio_url": "https://filipkoleda.dev",
-                    "location": "Gdańsk, Poland",
+                    "full_name": "Alex Example",
+                    "email": "alex.example@example.com",
+                    "phone": "+48 000 000 000",
+                    "linkedin_url": "https://www.linkedin.com/in/alex-example",
+                    "github_url": "https://github.com/alex-example",
+                    "portfolio_url": "https://alex-example.dev",
+                    "location": "Example City, Poland",
                 },
                 "target_roles": ["Automation Engineer"],
                 "professional_summary_base": "Automation and robotics student.",
@@ -267,7 +267,7 @@ def _build_request() -> MatchAnalysisRequest:
                 "skill_entries": [],
                 "education_entries": [
                     {
-                        "institution_name": "Gdańsk University of Technology",
+                        "institution_name": "Example University of Technology",
                         "degree": "Engineer",
                         "field_of_study": "Automation and Robotics",
                         "start_date": "2021-10",
@@ -288,7 +288,7 @@ def _build_request() -> MatchAnalysisRequest:
                 "source": "manual",
                 "title": "Junior Controls Engineer",
                 "company_name": "Example Tech",
-                "location": "Gdańsk, Poland",
+                "location": "Example City, Poland",
                 "work_mode": "onsite",
                 "employment_type": "uop",
                 "seniority_level": "junior",

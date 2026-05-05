@@ -53,6 +53,10 @@ class SkillEntry(BaseModel):
 
 class EducationEntry(BaseModel):
     institution_name: str = Field(..., description="Nazwa uczelni lub szkoły")
+    institution_name_en: Optional[str] = Field(
+        default=None,
+        description="Opcjonalna kontrolowana angielska nazwa uczelni lub szkoły"
+    )
     degree: str = Field(..., description="Stopień wykształcenia")
     field_of_study: str = Field(..., description="Kierunek lub specjalizacja")
     start_date: str = Field(..., description="Data rozpoczęcia")
@@ -85,6 +89,10 @@ class CandidateProfile(BaseModel):
     professional_summary_base: str = Field(..., description="Bazowe podsumowanie zawodowe")
     soft_skill_entries: List[str] = Field(default_factory=list, description="Jawnie wpisane umiejetnosci miekkie")
     interest_entries: List[str] = Field(default_factory=list, description="Jawnie wpisane obszary zainteresowan")
+    thesis_title: Optional[str] = Field(
+        default=None,
+        description="Opcjonalny tytul pracy dyplomowej kandydata"
+    )
     experience_entries: List[ExperienceEntry] = Field(default_factory=list)
     project_entries: List[ProjectEntry] = Field(default_factory=list)
     skill_entries: List[SkillEntry] = Field(default_factory=list)

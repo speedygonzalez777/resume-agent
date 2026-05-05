@@ -55,7 +55,7 @@ def _build_candidate_profile_understanding() -> CandidateProfileUnderstanding:
             CandidateSourceSignal(
                 source_type="project",
                 source_id="proj_001",
-                source_title="Hexapod Robot",
+                source_title="Robotics Demo Platform",
                 signal_label="control systems",
                 signal_kind="technical_competency",
                 evidence_class="hard_evidence",
@@ -321,7 +321,7 @@ def test_generate_resume_artifacts_carries_soft_skills_interests_and_project_lin
     assert parsed_response.resume_draft.selected_project_entries[0].source_project_id == "proj_001"
     assert (
         parsed_response.resume_draft.selected_project_entries[0].link
-        == "https://github.com/filipkoleda/hexapod"
+        == "https://github.com/alex-example/robotics-demo"
     )
 
 
@@ -363,7 +363,7 @@ def test_resume_generation_response_accepts_legacy_resume_draft_without_new_fiel
                 "selected_project_entries": [
                     {
                         "source_project_id": "proj_001",
-                        "project_name": "Hexapod Robot",
+                        "project_name": "Robotics Demo Platform",
                         "role": "Designer and developer",
                         "bullet_points": ["Built a functional robotic prototype"],
                         "highlighted_keywords": ["PLC"],

@@ -3,7 +3,8 @@
 from datetime import datetime
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.api.contracts import MatchingHandoffPayload
@@ -19,6 +20,21 @@ from app.models.resume import (
     ResumeGenerationMode,
     ResumeMatchResultSource,
 )
+from app.models.typst import (
+    TypstPrepareRequest,
+    TypstPrepareResponse,
+    TypstFitToPageRequest,
+    TypstFitToPageResponse,
+    TypstPhotoUploadResponse,
+    TypstQualityAnalysisRequest,
+    TypstQualityAnalysisResponse,
+    TypstRenderRequest,
+    TypstRenderResponse,
+)
+from app.services.openai_typst_quality_analysis_service import (
+    TypstQualityAnalysisOpenAIError,
+    analyze_typst_render_quality_with_openai,
+)
 from app.services.openai_resume_draft_refinement_service import (
     ResumeDraftRefinementOpenAIError,
 )
@@ -26,6 +42,18 @@ from app.services.resume_generation_service import generate_resume_artifacts
 from app.services.resume_draft_refinement_service import (
     ResumeDraftRefinementMergeError,
     refine_resume_draft as refine_resume_draft_service,
+)
+from app.services.resume_typst_service import (
+    TypstArtifactError,
+    TypstFitToPageError,
+    TypstPrepareError,
+    TypstPrepareSourceError,
+    fit_typst_payload_to_page,
+    prepare_typst_payload,
+    render_typst_payload,
+    resolve_typst_render_artifact,
+    save_typst_photo_asset,
+    TypstRenderError,
 )
 from app.services.persistence_service import (
     get_resume_draft,
@@ -248,6 +276,104 @@ def refine_resume_draft(
             "resume_draft_updated_at": stored_record["updated_at"],
             "persistence_warning": None,
         }
+    )
+
+
+@router.post("/typst/prepare", response_model=TypstPrepareResponse)
+def prepare_typst_resume(payload: TypstPrepareRequest) -> TypstPrepareResponse:
+    """Resolve one final draft source and return a placeholder Typst payload."""
+
+    try:
+        return prepare_typst_payload(payload)
+    except (TypstPrepareSourceError, TypstPrepareError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_error_detail(stage="prepare")) from exc
+
+
+@router.post("/typst/photo-assets", response_model=TypstPhotoUploadResponse)
+async def upload_typst_resume_photo(file: UploadFile = File(...)) -> TypstPhotoUploadResponse:
+    """Store a validated local photo asset for the Typst resume renderer."""
+
+    try:
+        content = await file.read()
+        return save_typst_photo_asset(
+            original_filename=file.filename or "",
+            content_type=file.content_type,
+            content=content,
+        )
+    except TypstArtifactError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post("/typst/render", response_model=TypstRenderResponse)
+def render_typst_resume(payload: TypstRenderRequest) -> TypstRenderResponse:
+    """Render an already prepared Typst payload into .typ and .pdf artifacts."""
+
+    try:
+        return render_typst_payload(payload.typst_payload)
+    except TypstRenderError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_error_detail(stage="render")) from exc
+
+
+@router.post("/typst/analyze-render", response_model=TypstQualityAnalysisResponse)
+def analyze_typst_render_quality(payload: TypstQualityAnalysisRequest) -> TypstQualityAnalysisResponse:
+    """Analyze a rendered Typst CV with OpenAI without modifying the TypstPayload."""
+
+    try:
+        return analyze_typst_render_quality_with_openai(payload)
+    except TypstQualityAnalysisOpenAIError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "error_code": "typst_quality_analysis_failed",
+                "message": exc.message,
+                "stage": "analyze-render",
+                **exc.details,
+            },
+        ) from exc
+
+
+@router.post("/typst/fit-to-page", response_model=TypstFitToPageResponse)
+def fit_typst_resume_to_page(payload: TypstFitToPageRequest) -> TypstFitToPageResponse:
+    """Create a safe text-only patch for a prepared TypstPayload without rendering it."""
+
+    try:
+        return fit_typst_payload_to_page(payload)
+    except TypstFitToPageError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.to_error_detail(stage="fit-to-page"),
+        ) from exc
+
+
+@router.get("/typst/artifacts/{render_id}/{artifact_type}")
+def download_typst_resume_artifact(
+    render_id: str,
+    artifact_type: str,
+    disposition: str = Query(default="attachment"),
+) -> FileResponse:
+    """Download one generated Typst source or PDF artifact from the controlled artifacts directory."""
+
+    normalized_disposition = (disposition or "").strip().lower()
+    if normalized_disposition not in {"attachment", "inline"}:
+        raise HTTPException(status_code=400, detail="Invalid disposition. Use 'attachment' or 'inline'.")
+
+    try:
+        artifact_path, media_type = resolve_typst_render_artifact(
+            render_id=render_id,
+            artifact_type=artifact_type,
+        )
+    except TypstArtifactError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    response_disposition = "inline" if artifact_type.strip().lower() == "pdf" else "attachment"
+    if normalized_disposition == "attachment":
+        response_disposition = "attachment"
+
+    return FileResponse(
+        path=artifact_path,
+        media_type=media_type,
+        filename=artifact_path.name,
+        content_disposition_type=response_disposition,
     )
 
 

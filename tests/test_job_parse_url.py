@@ -18,7 +18,7 @@ def test_parse_job_url_returns_job_posting(monkeypatch: pytest.MonkeyPatch) -> N
         source="justjoin",
         title="Junior Python Developer",
         company_name="Example Tech",
-        location="Gdansk, Poland",
+        location="Example City, Poland",
         work_mode="hybrid",
         employment_type="b2b",
         seniority_level="junior",

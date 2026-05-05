@@ -5,13 +5,15 @@
 import { useState } from "react";
 
 import CandidateProfileTab from "./CandidateProfileTab";
+import DocumentCvTab from "./DocumentCvTab";
 import JobOffersTab from "./JobOffersTab";
 import ResumeTab from "./ResumeTab";
 
 const TAB_DEFINITIONS = [
   { id: "jobs", label: "Oferty pracy" },
   { id: "profile", label: "Profil kandydata" },
-  { id: "resume", label: "CV i list motywacyjny" },
+  { id: "resume", label: "Przygotowanie CV" },
+  { id: "document", label: "Dokument CV" },
 ];
 
 /**
@@ -62,6 +64,10 @@ export default function App() {
 
         <section className="tab-panel" hidden={activeTab !== "resume"}>
           <ResumeTab jobListRefreshVersion={jobListRefreshVersion} />
+        </section>
+
+        <section className="tab-panel" hidden={activeTab !== "document"}>
+          <DocumentCvTab />
         </section>
       </section>
     </main>

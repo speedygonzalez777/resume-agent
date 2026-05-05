@@ -106,6 +106,23 @@ function extractErrorMessage(payload) {
 }
 
 /**
+ * Error thrown by API helpers while preserving backend response metadata.
+ */
+export class ApiError extends Error {
+  /**
+   * @param {string} message User-facing message.
+   * @param {{status: number, responseBody: unknown}} options Response metadata.
+   */
+  constructor(message, { status, responseBody }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.responseBody = responseBody;
+    this.data = responseBody;
+  }
+}
+
+/**
  * Read a JSON response and convert HTTP failures into readable errors.
  *
  * @param {Response} response Raw Fetch API response.
@@ -113,9 +130,20 @@ function extractErrorMessage(payload) {
  * @throws {Error} Raised when the backend responds with a non-2xx status.
  */
 async function readJson(response) {
-  const payload = await response.json();
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_error) {
+    payload = {
+      detail: response.statusText || "Backend request failed.",
+    };
+  }
+
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload));
+    throw new ApiError(extractErrorMessage(payload), {
+      status: response.status,
+      responseBody: payload,
+    });
   }
   return payload;
 }
@@ -496,4 +524,117 @@ export async function listResumeDrafts(limit = 50, candidateProfileId, jobPostin
 export async function getResumeDraftDetail(draftId) {
   const response = await fetch(buildApiUrl(`/resume/drafts/${draftId}`));
   return /** @type {Promise<object>} */ (readJson(response));
+}
+
+/**
+ * Prepare a final TypstPayload from a stored or inline ResumeDraft source.
+ *
+ * @param {object} requestBody Typst prepare request body.
+ * @returns {Promise<{typst_payload: object, prepare_debug: object | null}>} Prepared Typst payload.
+ */
+export async function prepareTypstResume(requestBody) {
+  const response = await fetch(buildApiUrl("/resume/typst/prepare"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+  return /** @type {Promise<{typst_payload: object, prepare_debug: object | null}>} */ (readJson(response));
+}
+
+/**
+ * Render one prepared TypstPayload into local .typ and .pdf artifacts.
+ *
+ * @param {object} typstPayload Prepared TypstPayload returned by /resume/typst/prepare.
+ * @returns {Promise<object>} Typst render response with artifact metadata.
+ */
+export async function renderTypstResume(typstPayload) {
+  const response = await fetch(buildApiUrl("/resume/typst/render"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      typst_payload: typstPayload,
+    }),
+  });
+  return /** @type {Promise<object>} */ (readJson(response));
+}
+
+/**
+ * Analyze a rendered Typst CV document without modifying the TypstPayload.
+ *
+ * @param {object} requestBody Typst quality-analysis request body.
+ * @returns {Promise<object>} Structured quality-analysis response.
+ */
+export async function analyzeTypstRender(requestBody) {
+  const response = await fetch(buildApiUrl("/resume/typst/analyze-render"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+  return /** @type {Promise<object>} */ (readJson(response));
+}
+
+/**
+ * Create a safe patch for fitting an existing TypstPayload to the rendered page.
+ *
+ * @param {object} requestBody Typst fit-to-page request body.
+ * @returns {Promise<object>} Fit-to-page response with patch, merged payload and debug metadata.
+ */
+export async function fitTypstPayloadToPage(requestBody) {
+  const response = await fetch(buildApiUrl("/resume/typst/fit-to-page"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+  return /** @type {Promise<object>} */ (readJson(response));
+}
+
+/**
+ * Upload one resume photo asset for the Typst renderer.
+ *
+ * @param {File} file Selected JPEG or PNG photo file.
+ * @returns {Promise<{photo_asset_id: string, photo_artifact: object, warnings: string[]}>} Stored photo metadata.
+ */
+export async function uploadResumePhoto(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(buildApiUrl("/resume/typst/photo-assets"), {
+    method: "POST",
+    body: formData,
+  });
+  return /** @type {Promise<{photo_asset_id: string, photo_artifact: object, warnings: string[]}>} */ (readJson(response));
+}
+
+/**
+ * Build the public URL for downloading a generated Typst source or PDF artifact.
+ *
+ * @param {string} renderId Render identifier returned by /resume/typst/render.
+ * @param {"typ" | "pdf"} artifactType Artifact kind to download.
+ * @returns {string} Download URL.
+ */
+export function buildTypstArtifactDownloadUrl(renderId, artifactType) {
+  return buildApiUrl(
+    `/resume/typst/artifacts/${encodeURIComponent(renderId)}/${encodeURIComponent(artifactType)}?disposition=attachment`,
+  );
+}
+
+/**
+ * Build the public inline preview URL for a generated Typst PDF artifact.
+ *
+ * @param {string} renderId Render identifier returned by /resume/typst/render.
+ * @param {"pdf"} artifactType Artifact kind to preview.
+ * @returns {string} Inline preview URL.
+ */
+export function buildTypstArtifactPreviewUrl(renderId, artifactType) {
+  return buildApiUrl(
+    `/resume/typst/artifacts/${encodeURIComponent(renderId)}/${encodeURIComponent(artifactType)}?disposition=inline`,
+  );
 }

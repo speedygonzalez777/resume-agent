@@ -1113,7 +1113,7 @@ def test_ai_semantic_matching_does_not_override_experience_year_threshold(monkey
                         RequirementCandidateEvidenceRef(
                             source_type="project",
                             source_id="proj_001",
-                            supporting_snippet="Hexapod Robot",
+                            supporting_snippet="Robotics Demo Platform",
                         )
                     ],
                     supporting_signal_labels=["OpenAI"],

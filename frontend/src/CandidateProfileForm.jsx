@@ -220,6 +220,7 @@ function createEmptyEducationEntry() {
   return {
     [UI_ENTRY_ID_FIELD]: createUiEntryId("education"),
     institution_name: "",
+    institution_name_en: "",
     degree: "",
     field_of_study: "",
     start_date: "",
@@ -274,6 +275,7 @@ export function createEmptyCandidateProfileFormState() {
     },
     target_roles: [],
     professional_summary_base: "",
+    thesis_title: "",
     soft_skill_entries: [],
     interest_entries: [],
     experience_entries: [],
@@ -313,6 +315,7 @@ export function createCandidateProfileFormStateFromProfile(profile) {
     },
     target_roles: normalizeStringList(profile?.target_roles),
     professional_summary_base: normalizeString(profile?.professional_summary_base),
+    thesis_title: normalizeString(profile?.thesis_title),
     soft_skill_entries: normalizeStringList(profile?.soft_skill_entries),
     interest_entries: normalizeStringList(profile?.interest_entries),
     experience_entries: Array.isArray(profile?.experience_entries)
@@ -360,6 +363,7 @@ export function createCandidateProfileFormStateFromProfile(profile) {
       ? profile.education_entries.map((entry) => ({
           [UI_ENTRY_ID_FIELD]: createUiEntryId("education"),
           institution_name: normalizeString(entry?.institution_name),
+          institution_name_en: normalizeString(entry?.institution_name_en),
           degree: normalizeString(entry?.degree),
           field_of_study: normalizeString(entry?.field_of_study),
           start_date: normalizeString(entry?.start_date),
@@ -457,6 +461,7 @@ function isEmptySkillEntry(entry) {
 function isEmptyEducationEntry(entry) {
   return ![
     normalizeString(entry.institution_name),
+    normalizeString(entry.institution_name_en),
     normalizeString(entry.degree),
     normalizeString(entry.field_of_study),
     normalizeString(entry.start_date),
@@ -508,6 +513,7 @@ export function buildCandidateProfilePayload(formState) {
     },
     target_roles: normalizeStringList(formState.target_roles),
     professional_summary_base: normalizeString(formState.professional_summary_base),
+    thesis_title: normalizeOptionalString(formState.thesis_title),
     soft_skill_entries: normalizeStringList(formState.soft_skill_entries),
     interest_entries: normalizeStringList(formState.interest_entries),
     experience_entries: formState.experience_entries
@@ -551,6 +557,7 @@ export function buildCandidateProfilePayload(formState) {
       .filter((entry) => !isEmptyEducationEntry(entry))
       .map((entry) => ({
         institution_name: normalizeString(entry.institution_name),
+        institution_name_en: normalizeOptionalString(entry.institution_name_en),
         degree: normalizeString(entry.degree),
         field_of_study: normalizeString(entry.field_of_study),
         start_date: normalizeString(entry.start_date),
@@ -1623,6 +1630,16 @@ export default function CandidateProfileForm({
         description="Szkoly, uczelnie i kierunki studiow."
         summary={`${formValue.education_entries.length} wpisow`}
       >
+        <label className="field section-wide-field">
+          <span>Tytuł pracy dyplomowej / Thesis</span>
+          <input
+            type="text"
+            value={formValue.thesis_title}
+            onChange={(event) => updateTopLevelField("thesis_title", event.target.value)}
+            placeholder="Opcjonalnie, np. tytuł pracy inżynierskiej lub magisterskiej"
+          />
+        </label>
+
         <div className="section-toolbar">
           <button type="button" className="ghost-button" onClick={() => addCollectionEntry("education_entries", createEmptyEducationEntry)}>
             Dodaj edukacje
@@ -1654,6 +1671,15 @@ export default function CandidateProfileForm({
                       type="text"
                       value={entry.institution_name}
                       onChange={(event) => updateCollectionEntry("education_entries", index, "institution_name", event.target.value)}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Nazwa uczelni po angielsku</span>
+                    <input
+                      type="text"
+                      value={entry.institution_name_en}
+                      onChange={(event) => updateCollectionEntry("education_entries", index, "institution_name_en", event.target.value)}
                     />
                   </label>
 

@@ -108,7 +108,7 @@ def _build_job_posting() -> JobPosting:
         source="justjoin",
         title="Junior Python Developer",
         company_name="Example Tech",
-        location="Gdansk, Poland",
+        location="Example City, Poland",
         work_mode="hybrid",
         employment_type="b2b",
         seniority_level="junior",

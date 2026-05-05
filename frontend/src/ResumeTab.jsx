@@ -1074,9 +1074,9 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
     <section className="tab-content">
       <div className="section-header tab-header">
         <div>
-          <h2>CV i list motywacyjny</h2>
+          <h2>Przygotowanie CV</h2>
           <p className="section-copy">
-            Przygotuj dopasowanie dla wybranego profilu i oferty, a nastepnie wygeneruj CV.
+            Przygotuj dopasowanie dla wybranego profilu i oferty, a nastepnie wygeneruj roboczy draft CV.
           </p>
         </div>
       </div>

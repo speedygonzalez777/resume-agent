@@ -8,6 +8,9 @@ _DEFAULT_JOB_PARSING_MODEL = "gpt-5-mini"
 _DEFAULT_MATCHING_MODEL = "gpt-5.4"
 _DEFAULT_RESUME_GENERATION_MODEL = "gpt-5.4"
 _DEFAULT_RESUME_REFINEMENT_MODEL = "gpt-5-mini"
+_DEFAULT_TYPST_FITTER_MODEL = "gpt-5.4-mini"
+_DEFAULT_TYPST_QUALITY_MODEL = "gpt-5.4-mini"
+_DEFAULT_TYPST_FIT_TO_PAGE_MODEL = "gpt-5.4-mini"
 
 
 def resolve_job_parsing_model() -> str:
@@ -45,6 +48,36 @@ def resolve_resume_refinement_model() -> str:
     return _resolve_model_name(
         "OPENAI_RESUME_DRAFT_REFINEMENT_MODEL",
         default=_DEFAULT_RESUME_REFINEMENT_MODEL,
+    )
+
+
+def resolve_typst_fitter_model() -> str:
+    """Resolve the model used by the Typst payload fitter."""
+
+    return _resolve_model_name(
+        "OPENAI_TYPST_FITTER_MODEL",
+        default=_DEFAULT_TYPST_FITTER_MODEL,
+    )
+
+
+def resolve_typst_quality_model() -> str:
+    """Resolve the model used by the Typst rendered-document quality analysis."""
+
+    return _resolve_model_name(
+        "OPENAI_TYPST_QUALITY_MODEL",
+        "OPENAI_TYPST_FITTER_MODEL",
+        default=_DEFAULT_TYPST_QUALITY_MODEL,
+    )
+
+
+def resolve_typst_fit_to_page_model() -> str:
+    """Resolve the model used by the Typst fit-to-page patch step."""
+
+    return _resolve_model_name(
+        "OPENAI_TYPST_FIT_TO_PAGE_MODEL",
+        "OPENAI_TYPST_QUALITY_MODEL",
+        "OPENAI_TYPST_FITTER_MODEL",
+        default=_DEFAULT_TYPST_FIT_TO_PAGE_MODEL,
     )
 
 

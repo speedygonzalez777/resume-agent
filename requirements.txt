@@ -3,7 +3,7 @@
 # Existing DOCX-related packages stay because later export stages are still planned.
 annotated-doc==0.0.4
 annotated-types==0.7.0
-anyio==4.12.1
+anyio==4.11.0
 certifi==2026.2.25
 click==8.3.1
 colorama==0.4.6
@@ -33,6 +33,7 @@ pytest==9.0.2
 python-docx==1.2.0
 python-dotenv==1.2.2
 python-multipart==0.0.22
+PyMuPDF
 PyYAML==6.0.3
 sniffio==1.3.1
 SQLAlchemy>=2.0,<3.0
@@ -43,5 +44,3 @@ typing_extensions==4.15.0
 uvicorn==0.41.0
 watchfiles==1.1.1
 websockets==16.0
-
-

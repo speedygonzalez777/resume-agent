@@ -1,13 +1,13 @@
 {
   "candidate_profile": {
     "personal_info": {
-      "full_name": "Filip Kolęda",
-      "email": "filip@example.com",
-      "phone": "+48 123 456 789",
-      "linkedin_url": "https://www.linkedin.com/in/filipkoleda",
-      "github_url": "https://github.com/filipkoleda",
-      "portfolio_url": "https://filipkoleda.dev",
-      "location": "Gdańsk, Poland"
+      "full_name": "Alex Example",
+      "email": "alex.example@example.com",
+      "phone": "+48 000 000 000",
+      "linkedin_url": "https://www.linkedin.com/in/alex-example",
+      "github_url": "https://github.com/alex-example",
+      "portfolio_url": "https://alex-example.dev",
+      "location": "Example City, Poland"
     },
     "target_roles": [
       "Automation Engineer",
@@ -23,7 +23,7 @@
         "start_date": "2024-06",
         "end_date": "2024-09",
         "is_current": false,
-        "location": "Gdańsk, Poland",
+        "location": "Example City, Poland",
         "responsibilities": [
           "Assisted in PLC-related automation tasks",
           "Prepared technical documentation",
@@ -48,9 +48,9 @@
     "project_entries": [
       {
         "id": "proj_001",
-        "project_name": "Hexapod Robot",
+        "project_name": "Robotics Demo Platform",
         "role": "Designer and developer",
-        "description": "Designed and developed a custom hexapod robot as an engineering project.",
+        "description": "Designed and developed a custom robotics demo platform as an engineering project.",
         "technologies_used": [
           "Arduino",
           "Python",
@@ -66,7 +66,7 @@
           "embedded",
           "control systems"
         ],
-        "link": "https://github.com/filipkoleda/hexapod"
+        "link": "https://github.com/alex-example/robotics-demo"
       }
     ],
     "skill_entries": [
@@ -95,7 +95,7 @@
     ],
     "education_entries": [
       {
-        "institution_name": "Gdańsk University of Technology",
+        "institution_name": "Example University of Technology",
         "degree": "Engineer",
         "field_of_study": "Automation and Robotics",
         "start_date": "2021-10",
@@ -115,8 +115,8 @@
     ],
     "certificate_entries": [
       {
-        "certificate_name": "SEP up to 1kV",
-        "issuer": "SEP",
+        "certificate_name": "Example Elec Cert",
+        "issuer": "Example Org",
         "issue_date": "2024-05",
         "notes": "Electrical qualifications up to 1kV"
       }
@@ -144,7 +144,7 @@
     "source": "manual",
     "title": "Junior Automation Engineer",
     "company_name": "Example Automation",
-    "location": "Gdańsk, Poland",
+    "location": "Example City, Poland",
     "work_mode": "onsite",
     "employment_type": "uop",
     "seniority_level": "junior",
