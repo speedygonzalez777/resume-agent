@@ -178,48 +178,6 @@ def build_requirement_priority_sort_key(
     )
 
 
-def collect_prioritized_requirement_keywords(
-    job_posting: JobPosting,
-    priority_lookup: dict[str, OpenAIRequirementPriorityItem],
-) -> list[str]:
-    """Collect requirement and job keywords in a priority-aware user-facing order."""
-
-    keywords: list[str] = []
-
-    if priority_lookup:
-        ordered_requirements = [
-            requirement
-            for _, requirement in sorted(
-                enumerate(job_posting.requirements),
-                key=lambda item: build_requirement_priority_sort_key(
-                    item[1],
-                    item[0],
-                    priority_lookup,
-                ),
-            )
-        ]
-        for requirement in ordered_requirements:
-            for keyword in requirement.extracted_keywords:
-                _append_unique(keywords, keyword)
-        for keyword in job_posting.keywords:
-            _append_unique(keywords, keyword)
-        return keywords
-
-    for keyword in job_posting.keywords:
-        _append_unique(keywords, keyword)
-    for requirement in job_posting.requirements:
-        for keyword in requirement.extracted_keywords:
-            _append_unique(keywords, keyword)
-
-    return keywords
-
-
-def _append_unique(target: list[str], value: str | None) -> None:
-    stripped_value = value.strip() if value else ""
-    if stripped_value and stripped_value not in target:
-        target.append(stripped_value)
-
-
 def _build_responses_parse_kwargs(
     job_posting: JobPosting,
     model_name: str,

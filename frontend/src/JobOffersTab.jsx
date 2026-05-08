@@ -5,7 +5,6 @@
 import { useEffect, useState } from "react";
 
 import {
-  checkBackendHealth,
   deleteJobPosting,
   getJobPostingDetail,
   listJobPostings,
@@ -25,7 +24,7 @@ function getErrorMessage(error) {
   if (error instanceof Error && error.message) {
     return error.message;
   }
-  return "Wystapil nieoczekiwany blad.";
+  return "Wystąpił nieoczekiwany błąd.";
 }
 
 /**
@@ -72,10 +71,10 @@ function buildParsedPreviewStats(jobPosting) {
 
   return [
     { label: "Lokalizacja", value: jobPosting?.location || "brak" },
-    { label: "Zrodlo", value: jobPosting?.source || "brak" },
+    { label: "Źródło", value: jobPosting?.source || "brak" },
     { label: "Wymagania", value: String(requirementsCount) },
-    { label: "Obowiazki", value: String(responsibilitiesCount) },
-    { label: "Keywords", value: String(keywordsCount) },
+    { label: "Obowiązki", value: String(responsibilitiesCount) },
+    { label: "Słowa kluczowe", value: String(keywordsCount) },
   ];
 }
 
@@ -85,7 +84,6 @@ function buildParsedPreviewStats(jobPosting) {
  * @returns {JSX.Element} Offer-management tab content.
  */
 export default function JobOffersTab({ onJobSaved }) {
-  const [backendStatus, setBackendStatus] = useState("Sprawdzanie...");
   const [jobUrl, setJobUrl] = useState("");
   const [parsedJobPosting, setParsedJobPosting] = useState(null);
   const [parseLoading, setParseLoading] = useState(false);
@@ -113,20 +111,6 @@ export default function JobOffersTab({ onJobSaved }) {
     setSelectedJobDetail(null);
     setSelectedJobError(null);
     setSelectedJobLoading(false);
-  }
-
-  /**
-   * Load backend health and show a compact connection status in the header.
-   *
-   * @returns {Promise<void>} Promise resolved after the status label is updated.
-   */
-  async function loadHealthStatus() {
-    try {
-      const payload = await checkBackendHealth();
-      setBackendStatus(payload.status === "ok" ? "Backend dziala" : "Backend odpowiada nieoczekiwanie");
-    } catch (error) {
-      setBackendStatus(`Blad polaczenia: ${getErrorMessage(error)}`);
-    }
   }
 
   /**
@@ -178,7 +162,6 @@ export default function JobOffersTab({ onJobSaved }) {
   }
 
   useEffect(() => {
-    void loadHealthStatus();
     void refreshJobHistory();
   }, []);
 
@@ -195,7 +178,7 @@ export default function JobOffersTab({ onJobSaved }) {
     try {
       const payload = await parseJobPosting(jobUrl.trim());
       setParsedJobPosting(payload);
-      setMessage({ type: "success", text: "Oferta zostala sparsowana." });
+      setMessage({ type: "success", text: "Oferta została wczytana." });
     } catch (error) {
       setMessage({ type: "error", text: getErrorMessage(error) });
     } finally {
@@ -225,10 +208,10 @@ export default function JobOffersTab({ onJobSaved }) {
         await selectStoredJob(payload.id);
         setMessage({
           type: "success",
-          text: `Oferta zostala zapisana z ID ${payload.id} i ustawiona jako aktywna.`,
+          text: `Oferta została zapisana z ID ${payload.id} i ustawiona jako aktywna.`,
         });
       } else {
-        setMessage({ type: "success", text: "Oferta zostala zapisana." });
+        setMessage({ type: "success", text: "Oferta została zapisana." });
       }
     } catch (error) {
       setMessage({ type: "error", text: getErrorMessage(error) });
@@ -247,7 +230,7 @@ export default function JobOffersTab({ onJobSaved }) {
   async function handleDeleteJobClick(jobPostingId, event) {
     event.stopPropagation();
 
-    const shouldDelete = window.confirm("Czy na pewno chcesz usunac te oferte z historii?");
+    const shouldDelete = window.confirm("Czy na pewno chcesz usunąć tę ofertę z historii?");
     if (!shouldDelete) {
       return;
     }
@@ -269,7 +252,7 @@ export default function JobOffersTab({ onJobSaved }) {
 
       setMessage({
         type: "success",
-        text: `Oferta ${payload.id} zostala usunieta z historii.`,
+        text: `Oferta ${payload.id} została usunięta z historii.`,
       });
     } catch (error) {
       setMessage({ type: "error", text: getErrorMessage(error) });
@@ -286,16 +269,11 @@ export default function JobOffersTab({ onJobSaved }) {
     <section className="tab-content">
       <div className="section-header tab-header">
         <div>
-          <h2>Oferty pracy</h2>
+          <h2>Oferta</h2>
           <p className="section-copy">
-            Wczytaj oferte pracy z linku i zapisz ja do historii.
+            Wczytaj ofertę pracy z linku i zapisz ją do historii.
           </p>
         </div>
-      </div>
-
-      <div className="status-row compact-status-row">
-        <span className="label">Health check:</span>
-        <span>{backendStatus}</span>
       </div>
 
       {message ? <div className={`message ${message.type}`}>{message.text}</div> : null}
@@ -304,10 +282,9 @@ export default function JobOffersTab({ onJobSaved }) {
         <section className="section-card section-wide">
           <div className="section-header">
             <div>
-              <h3>Nowa oferta</h3>
+              <h3>Dodaj ofertę</h3>
               <p className="section-copy">
-                Wklej URL oferty, sparsuj nowy `JobPosting`, a potem zapisz go do lokalnej bazy. Ten panel pokazuje
-                tylko aktualnie parsowany wynik z URL.
+                Wklej link do oferty, wczytaj jej treść, a potem zapisz wynik do lokalnej historii.
               </p>
             </div>
           </div>
@@ -324,21 +301,21 @@ export default function JobOffersTab({ onJobSaved }) {
 
           <div className="actions">
             <button type="button" onClick={handleParseClick} disabled={parseLoading || saveLoading || !jobUrl.trim()}>
-              {parseLoading ? "Parsowanie..." : "Parsuj oferte"}
+              {parseLoading ? "Wczytywanie..." : "Wczytaj ofertę"}
             </button>
             <button type="button" onClick={handleSaveClick} disabled={saveLoading || !parsedJobPosting}>
-              {saveLoading ? "Zapisywanie..." : "Zapisz oferte"}
+              {saveLoading ? "Zapisywanie..." : "Zapisz ofertę"}
             </button>
           </div>
 
           <section className="result-panel compact-preview">
-            <h4>Krotki podglad nowej oferty</h4>
+            <h4>Podgląd oferty</h4>
             {parsedJobPosting ? (
               <div className="parsed-preview">
-                <span className="section-eyebrow">Aktualnie parsowany wynik z URL</span>
+                <span className="section-eyebrow">Aktualnie wczytany wynik z linku</span>
                 <div className="preview-header">
                   <div>
-                    <h5 className="preview-title">{parsedJobPosting.title || "Brak tytulu"}</h5>
+                    <h5 className="preview-title">{parsedJobPosting.title || "Brak tytułu"}</h5>
                     <p className="preview-company">{parsedJobPosting.company_name || "Brak nazwy firmy"}</p>
                   </div>
                 </div>
@@ -357,11 +334,11 @@ export default function JobOffersTab({ onJobSaved }) {
                   <p className="detail-text">{parsedJobPosting.role_summary || "Brak opisu roli."}</p>
                 </section>
 
-                <RawJsonPanel summary="Raw JSON sparsowanej oferty" value={parsedJobPosting} />
+                <RawJsonPanel summary="Szczegóły techniczne oferty" value={parsedJobPosting} />
               </div>
             ) : (
               <p className="placeholder">
-                Po sparsowaniu tutaj pojawi sie krotki podglad najwazniejszych pol nowej oferty.
+                Po wczytaniu tutaj pojawi się krótki podgląd najważniejszych pól nowej oferty.
               </p>
             )}
           </section>
@@ -371,7 +348,7 @@ export default function JobOffersTab({ onJobSaved }) {
           <div className="section-header section-header-inline">
             <div>
               <h3>Historia ofert</h3>
-              <p className="section-copy">Zapisane oferty. Wybierz rekord, aby zobaczyc szczegoly.</p>
+              <p className="section-copy">Zapisane oferty. Wybierz rekord, aby zobaczyć szczegóły.</p>
             </div>
             <button
               type="button"
@@ -379,7 +356,7 @@ export default function JobOffersTab({ onJobSaved }) {
               onClick={() => void refreshJobHistory()}
               disabled={historyLoading || parseLoading || saveLoading || deletingJobId !== null}
             >
-              {historyLoading ? "Odswiezanie..." : "Odswiez"}
+              {historyLoading ? "Odświeżanie..." : "Odśwież"}
             </button>
           </div>
 
@@ -401,7 +378,7 @@ export default function JobOffersTab({ onJobSaved }) {
             {historyError ? <div className="message error">{historyError}</div> : null}
 
             {historyLoading ? (
-              <p className="placeholder">Ladowanie historii ofert...</p>
+              <p className="placeholder">Ładowanie historii ofert...</p>
             ) : filteredJobHistory.length > 0 ? (
               <div className="history-list-wrapper">
                 <div className="history-list">
@@ -416,7 +393,7 @@ export default function JobOffersTab({ onJobSaved }) {
                         <span className="history-title">{job.title}</span>
                         <span className="history-company">{job.company_name}</span>
                         <span className="history-meta">{job.location || "brak lokalizacji"}</span>
-                        <span className="history-meta">{job.source || "brak zrodla"}</span>
+                        <span className="history-meta">{job.source || "brak źródła"}</span>
                         <span className="history-meta history-meta-secondary">
                           Zapisano: {formatSavedAt(job.saved_at)}
                         </span>
@@ -428,7 +405,7 @@ export default function JobOffersTab({ onJobSaved }) {
                         onClick={(event) => void handleDeleteJobClick(job.id, event)}
                         disabled={deletingJobId !== null || parseLoading || saveLoading}
                       >
-                        {deletingJobId === job.id ? "Usuwanie..." : "Usun"}
+                        {deletingJobId === job.id ? "Usuwanie..." : "Usuń"}
                       </button>
                     </div>
                   ))}
@@ -437,8 +414,8 @@ export default function JobOffersTab({ onJobSaved }) {
             ) : (
               <p className="placeholder">
                 {jobHistory.length > 0
-                  ? "Brak ofert pasujacych do filtra."
-                  : "Brak zapisanych ofert. Zapisane rekordy pojawia sie tutaj."}
+                  ? "Brak ofert pasujących do filtra."
+                  : "Brak zapisanych ofert. Zapisane rekordy pojawią się tutaj."}
               </p>
             )}
           </div>
@@ -447,16 +424,15 @@ export default function JobOffersTab({ onJobSaved }) {
         <section className="section-card scroll-panel">
           <div className="section-header">
             <div>
-              <h3>Szczegoly wybranej oferty</h3>
+              <h3>Szczegóły wybranej oferty</h3>
               <p className="section-copy">
-                To jest zapisany rekord wybrany z historii. Pelny szczegol pobieramy dopiero po kliknieciu oferty z
-                lewej strony.
+                To jest zapisany rekord wybrany z historii. Pełne dane pobieramy dopiero po kliknięciu oferty.
               </p>
             </div>
           </div>
 
           <div className="scroll-panel-body selected-job-panel-body">
-            {selectedJobLoading ? <p className="placeholder">Ladowanie szczegolow oferty...</p> : null}
+            {selectedJobLoading ? <p className="placeholder">Ładowanie szczegółów oferty...</p> : null}
             {selectedJobError ? <div className="message error">{selectedJobError}</div> : null}
 
             {selectedJobDetail?.payload ? (
@@ -471,7 +447,7 @@ export default function JobOffersTab({ onJobSaved }) {
                     <dd>{formatSavedAt(selectedJobDetail.saved_at)}</dd>
                   </div>
                   <div>
-                    <dt>Zrodlo</dt>
+                    <dt>Źródło</dt>
                     <dd>{selectedJobDetail.source}</dd>
                   </div>
                   <div>
@@ -482,11 +458,11 @@ export default function JobOffersTab({ onJobSaved }) {
 
                 <JobPostingDetails
                   jobPosting={selectedJobDetail.payload}
-                  rawJsonLabel="Raw JSON zapisanego JobPosting"
+                  rawJsonLabel="Szczegóły techniczne zapisanej oferty"
                 />
               </>
             ) : !selectedJobLoading ? (
-              <p className="placeholder">Wybierz oferte z historii, aby zobaczyc jej zapisany szczegol.</p>
+              <p className="placeholder">Wybierz ofertę z historii, aby zobaczyć jej zapisane szczegóły.</p>
             ) : null}
           </div>
         </section>
@@ -494,4 +470,3 @@ export default function JobOffersTab({ onJobSaved }) {
     </section>
   );
 }
-

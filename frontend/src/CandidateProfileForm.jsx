@@ -597,19 +597,43 @@ export function buildCandidateProfilePayload(formState) {
  *   description: string,
  *   summary?: string,
  *   defaultOpen?: boolean,
+ *   isOpen?: boolean,
+ *   onToggle?: (nextOpen: boolean) => void,
+ *   summaryActions?: import("react").ReactNode,
  *   children: import("react").ReactNode,
  * }} props Component props.
  * @returns {JSX.Element} Collapsible form section.
  */
-function FormSection({ title, description, summary, defaultOpen = false, children }) {
+function FormSection({
+  title,
+  description,
+  summary,
+  defaultOpen = false,
+  isOpen = defaultOpen,
+  onToggle,
+  summaryActions = null,
+  children,
+}) {
   return (
-    <details className="profile-form-section" open={defaultOpen}>
+    <details
+      className="profile-form-section"
+      open={isOpen}
+      onToggle={(event) => {
+        if (typeof onToggle === "function") {
+          onToggle(event.currentTarget.open);
+        }
+      }}
+    >
       <summary className="profile-form-summary">
-        <div>
+        <div className="profile-form-summary-main">
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
-        {summary ? <span className="section-count-badge">{summary}</span> : null}
+
+        <div className="profile-form-summary-side">
+          {summary ? <span className="section-count-badge">{summary}</span> : null}
+          {summaryActions ? <div className="profile-form-summary-actions">{summaryActions}</div> : null}
+        </div>
       </summary>
 
       <div className="profile-form-body">{children}</div>
@@ -639,7 +663,7 @@ function formatEntryDateRange(startDate, endDate, isCurrent = false) {
  * @returns {string} Human-readable label.
  */
 function buildExperienceEntryLabel(entry, index) {
-  const positionTitle = normalizeString(entry.position_title) || `Doswiadczenie ${index + 1}`;
+  const positionTitle = normalizeString(entry.position_title) || `Doświadczenie ${index + 1}`;
   const companyName = normalizeString(entry.company_name);
   return companyName ? `${positionTitle} w ${companyName}` : positionTitle;
 }
@@ -672,21 +696,21 @@ function buildSaveStatus(
   if (isEditMode && hasUnsavedChanges) {
     return {
       tone: "warning",
-      text: `Edytujesz istniejący ${profileContext}. Masz niezapisane zmiany. Kliknij "Zapisz zmiany", aby zaktualizowac ten rekord, albo "Anuluj edycje", aby wrocic do nowego profilu.`,
+      text: `Edytujesz istniejący ${profileContext}. Masz niezapisane zmiany. Kliknij "Zapisz zmiany", aby zaktualizować ten rekord, albo "Anuluj edycję", aby wrócić do nowego profilu.`,
     };
   }
 
   if (isEditMode && lastSavedProfileId === editingProfileId) {
     return {
       tone: "success",
-      text: `Edytujesz istniejący ${profileContext}. Ostatnia aktualizacja zostala zapisana w tym samym rekordzie.`,
+      text: `Edytujesz istniejący ${profileContext}. Ostatnia aktualizacja została zapisana w tym samym rekordzie.`,
     };
   }
 
   if (isEditMode) {
     return {
       tone: "info",
-      text: `Edytujesz istniejący ${profileContext}. Kliknij "Zapisz zmiany", aby zaktualizowac ten rekord, albo "Anuluj edycje", aby wrocic do tworzenia nowego profilu.`,
+      text: `Edytujesz istniejący ${profileContext}. Kliknij "Zapisz zmiany", aby zaktualizować ten rekord, albo "Anuluj edycję", aby wrócić do tworzenia nowego profilu.`,
     };
   }
 
@@ -700,7 +724,7 @@ function buildSaveStatus(
   if (lastSavedProfileId != null) {
     return {
       tone: "success",
-      text: `Wszystkie zmiany formularza zostaly zapisane. Ostatni zapis ma ID ${lastSavedProfileId}.`,
+      text: `Wszystkie zmiany formularza zostały zapisane. Ostatni zapis ma ID ${lastSavedProfileId}.`,
     };
   }
 
@@ -722,7 +746,7 @@ function buildSaveStatus(
  * }} props Component props.
  * @returns {JSX.Element} Multiline list editor.
  */
-function LineListField({ label, value, onChange, placeholder = "Kazda linia to osobna pozycja", rows = 4 }) {
+function LineListField({ label, value, onChange, placeholder = "Każda linia to osobna pozycja", rows = 4 }) {
   return (
     <label className="field">
       <span>{label}</span>
@@ -769,6 +793,20 @@ export default function CandidateProfileForm({
   const profilePreview = buildCandidateProfilePayload(formValue);
   const [experienceDraft, setExperienceDraft] = useState(null);
   const [highlightedExperienceEntryId, setHighlightedExperienceEntryId] = useState(null);
+  const [openSections, setOpenSections] = useState({
+    basic: true,
+    targetRoles: true,
+    summary: true,
+    experience: true,
+    projects: false,
+    skills: true,
+    softSkills: false,
+    interests: false,
+    education: false,
+    languages: false,
+    certificates: false,
+    advanced: false,
+  });
   const isProfileSaveBlockedByExperienceDraft = experienceDraft !== null;
   const saveStatus = buildSaveStatus(
     hasUnsavedChanges,
@@ -778,6 +816,40 @@ export default function CandidateProfileForm({
     editingProfileId,
     editingProfileLabel,
   );
+
+  function setSectionOpen(sectionKey, nextOpen) {
+    setOpenSections((currentSections) => ({
+      ...currentSections,
+      [sectionKey]: nextOpen,
+    }));
+  }
+
+  function toggleSectionOpen(sectionKey) {
+    setOpenSections((currentSections) => ({
+      ...currentSections,
+      [sectionKey]: !currentSections[sectionKey],
+    }));
+  }
+
+  function ensureSectionOpen(sectionKey) {
+    setSectionOpen(sectionKey, true);
+  }
+
+  function SummaryActionButton({ label, onClick }) {
+    return (
+      <button
+        type="button"
+        className="ghost-button section-summary-button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onClick();
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
 
   /**
    * Update one field inside `personal_info`.
@@ -847,6 +919,11 @@ export default function CandidateProfileForm({
       ...formValue,
       [collectionName]: [...formValue[collectionName], createEntry()],
     });
+  }
+
+  function handleAddCollectionEntry(sectionKey, collectionName, createEntry) {
+    ensureSectionOpen(sectionKey);
+    addCollectionEntry(collectionName, createEntry);
   }
 
   /**
@@ -946,6 +1023,7 @@ export default function CandidateProfileForm({
       return;
     }
 
+    ensureSectionOpen("experience");
     setExperienceDraft({
       mode: "create",
       value: createEmptyExperienceEntry(),
@@ -974,6 +1052,7 @@ export default function CandidateProfileForm({
       sourceEntryId: entry.id,
       value: cloneExperienceEntry(entry),
     });
+    ensureSectionOpen("experience");
     setHighlightedExperienceEntryId(entry.id);
   }
 
@@ -1071,7 +1150,7 @@ export default function CandidateProfileForm({
           <h3>{isEditMode ? "Edycja profilu" : "Formularz profilu"}</h3>
           <p className="section-copy">
             {isEditMode
-              ? `Aktualizujesz istniejacy rekord${editingProfileId != null ? ` o ID ${editingProfileId}` : ""}.`
+              ? `Aktualizujesz istniejący rekord${editingProfileId != null ? ` o ID ${editingProfileId}` : ""}.`
               : "Uzupelnij profil kandydata i zapisz go do dalszej analizy."}
           </p>
         </div>
@@ -1094,7 +1173,18 @@ export default function CandidateProfileForm({
 
       <div className={`message ${saveStatus.tone}`}>{saveStatus.text}</div>
 
-      <FormSection title="Dane podstawowe" description="Najwazniejsze dane kontaktowe i linki." defaultOpen>
+      <FormSection
+        title="Dane podstawowe"
+        description="Najważniejsze dane kontaktowe i linki."
+        isOpen={openSections.basic}
+        onToggle={(nextOpen) => setSectionOpen("basic", nextOpen)}
+        summaryActions={
+          <SummaryActionButton
+            label={openSections.basic ? "Zwiń" : "Rozwiń"}
+            onClick={() => toggleSectionOpen("basic")}
+          />
+        }
+      >
         <div className="form-grid">
           <label className="field">
             <span>Imie i nazwisko</span>
@@ -1163,9 +1253,19 @@ export default function CandidateProfileForm({
 
       <FormSection
         title="Role docelowe"
-        description="Stanowiska, na ktore chcesz aplikowac."
+        description="Stanowiska, na które chcesz aplikować."
         summary={`${formValue.target_roles.length} pozycji`}
-        defaultOpen
+        isOpen={openSections.targetRoles}
+        onToggle={(nextOpen) => setSectionOpen("targetRoles", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton label="Dodaj" onClick={() => ensureSectionOpen("targetRoles")} />
+            <SummaryActionButton
+              label={openSections.targetRoles ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("targetRoles")}
+            />
+          </>
+        }
       >
         <TagListInput
           label="Role docelowe"
@@ -1173,10 +1273,22 @@ export default function CandidateProfileForm({
           onChange={(items) => updateTopLevelField("target_roles", items)}
           placeholder="Np. Backend Developer"
           addLabel="Dodaj role"
+          emptyText="Brak wpisów. Dodaj pierwszą rolę docelową."
         />
       </FormSection>
 
-      <FormSection title="Podsumowanie zawodowe" description="Krotki opis Twojego profilu zawodowego." defaultOpen>
+      <FormSection
+        title="Podsumowanie zawodowe"
+        description="Krótki opis Twojego profilu zawodowego."
+        isOpen={openSections.summary}
+        onToggle={(nextOpen) => setSectionOpen("summary", nextOpen)}
+        summaryActions={
+          <SummaryActionButton
+            label={openSections.summary ? "Zwiń" : "Rozwiń"}
+            onClick={() => toggleSectionOpen("summary")}
+          />
+        }
+      >
         <label className="field">
           <span>Podsumowanie</span>
           <textarea
@@ -1189,17 +1301,21 @@ export default function CandidateProfileForm({
       </FormSection>
 
       <FormSection
-        title="Doswiadczenie zawodowe"
-        description="Najwazniejsze miejsca pracy i zakres odpowiedzialnosci."
-        summary={`${formValue.experience_entries.length} wpisow`}
-        defaultOpen
+        title="Doświadczenie zawodowe"
+        description="Najważniejsze miejsca pracy i zakres odpowiedzialności."
+        summary={`${formValue.experience_entries.length} wpisów`}
+        isOpen={openSections.experience}
+        onToggle={(nextOpen) => setSectionOpen("experience", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton label="Dodaj" onClick={handleAddExperienceEntry} />
+            <SummaryActionButton
+              label={openSections.experience ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("experience")}
+            />
+          </>
+        }
       >
-        <div className="section-toolbar">
-          <button type="button" className="ghost-button" onClick={handleAddExperienceEntry}>
-            Dodaj doswiadczenie
-          </button>
-        </div>
-
         {formValue.experience_entries.length > 0 || experienceDraft ? (
           <div className="record-list">
             {formValue.experience_entries.length > 0 ? (
@@ -1219,7 +1335,7 @@ export default function CandidateProfileForm({
                     <article key={entry.id} className={`record-card compact-record-card${isActive ? " active-record-card" : ""}`}>
                       <div className="record-card-header">
                         <div>
-                          <h4>{entry.position_title || `Doswiadczenie ${index + 1}`}</h4>
+                          <h4>{entry.position_title || `Doświadczenie ${index + 1}`}</h4>
                           <p>{entry.company_name || "Nowy wpis"}</p>
                         </div>
 
@@ -1232,7 +1348,7 @@ export default function CandidateProfileForm({
                             className="ghost-button danger-ghost-button"
                             onClick={() => handleRemoveExperienceEntry(index)}
                           >
-                            Usun
+                            Usuń
                           </button>
                         </div>
                       </div>
@@ -1260,21 +1376,21 @@ export default function CandidateProfileForm({
                 })}
               </div>
             ) : (
-              <p className="placeholder">Brak jeszcze zapisanych wpisow doswiadczenia.</p>
+              <p className="placeholder">Brak jeszcze zapisanych wpisów doświadczenia.</p>
             )}
 
             {experienceDraft ? (
               <article className="record-card record-editor-card">
                 <div className="record-card-header">
                   <div>
-                    <h4>{experienceDraft.mode === "edit" ? "Edytowane doswiadczenie" : "Nowe doswiadczenie"}</h4>
+                    <h4>{experienceDraft.mode === "edit" ? "Edytowane doświadczenie" : "Nowe doświadczenie"}</h4>
                     <p>
                       {experienceDraft.mode === "edit"
                         ? buildExperienceEntryLabel(
                             experienceDraft.value,
                             formValue.experience_entries.findIndex((entry) => entry.id === experienceDraft.sourceEntryId),
                           )
-                        : "Wypelnij formularz i kliknij \"Zapisz doswiadczenie\", aby dodac wpis do listy."}
+                        : "Wypełnij formularz i kliknij \"Zapisz doświadczenie\", aby dodać wpis do listy."}
                     </p>
                   </div>
                   <span className="section-count-badge">
@@ -1350,14 +1466,14 @@ export default function CandidateProfileForm({
                     experienceDraft.value.responsibilities,
                   )}
                   onChange={(value) => updateExperienceDraftField("responsibilities_text", value)}
-                  placeholder="Kazda linia to osobny obowiazek"
+                  placeholder="Każda linia to osobny obowiązek"
                 />
 
                 <LineListField
                   label="Osiągnięcia"
                   value={getLineListDraftValue(experienceDraft.value.achievements_text, experienceDraft.value.achievements)}
                   onChange={(value) => updateExperienceDraftField("achievements_text", value)}
-                  placeholder="Kazda linia to osobne osiągnięcie"
+                  placeholder="Każda linia to osobne osiągnięcie"
                 />
 
                 <div className="form-grid">
@@ -1370,11 +1486,11 @@ export default function CandidateProfileForm({
                   />
 
                   <TagListInput
-                    label="Slowa kluczowe"
+                    label="Słowa kluczowe"
                     items={experienceDraft.value.keywords}
                     onChange={(items) => updateExperienceDraftField("keywords", items)}
                     placeholder="Np. API"
-                    addLabel="Dodaj slowo"
+                    addLabel="Dodaj słowo"
                   />
                 </div>
 
@@ -1398,21 +1514,29 @@ export default function CandidateProfileForm({
             ) : null}
           </div>
         ) : (
-          <p className="placeholder">Dodaj pierwsze doswiadczenie zawodowe.</p>
+          <p className="placeholder">Brak wpisów. Dodaj pierwsze doświadczenie zawodowe.</p>
         )}
       </FormSection>
 
       <FormSection
         title="Projekty"
-        description="Projekty, ktore warto pokazac przy dopasowaniu do oferty."
-        summary={`${formValue.project_entries.length} wpisow`}
+        description="Projekty, które warto pokazać przy dopasowaniu do oferty."
+        summary={`${formValue.project_entries.length} wpisów`}
+        isOpen={openSections.projects}
+        onToggle={(nextOpen) => setSectionOpen("projects", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton
+              label="Dodaj"
+              onClick={() => handleAddCollectionEntry("projects", "project_entries", createEmptyProjectEntry)}
+            />
+            <SummaryActionButton
+              label={openSections.projects ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("projects")}
+            />
+          </>
+        }
       >
-        <div className="section-toolbar">
-          <button type="button" className="ghost-button" onClick={() => addCollectionEntry("project_entries", createEmptyProjectEntry)}>
-            Dodaj projekt
-          </button>
-        </div>
-
         {formValue.project_entries.length > 0 ? (
           <div className="record-list">
             {formValue.project_entries.map((entry, index) => (
@@ -1427,7 +1551,7 @@ export default function CandidateProfileForm({
                     className="ghost-button danger-ghost-button"
                     onClick={() => removeCollectionEntry("project_entries", index)}
                   >
-                    Usun
+                    Usuń
                   </button>
                 </div>
 
@@ -1474,7 +1598,7 @@ export default function CandidateProfileForm({
                   label="Rezultaty"
                   value={getLineListDraftValue(entry.outcomes_text, entry.outcomes)}
                   onChange={(value) => updateCollectionEntry("project_entries", index, "outcomes_text", value)}
-                  placeholder="Kazda linia to osobny rezultat"
+                  placeholder="Każda linia to osobny rezultat"
                 />
 
                 <div className="form-grid">
@@ -1487,40 +1611,47 @@ export default function CandidateProfileForm({
                   />
 
                   <TagListInput
-                    label="Slowa kluczowe"
+                    label="Słowa kluczowe"
                     items={entry.keywords}
                     onChange={(items) => updateCollectionEntry("project_entries", index, "keywords", items)}
                     placeholder="Np. REST API"
-                    addLabel="Dodaj slowo"
+                    addLabel="Dodaj słowo"
                   />
                 </div>
               </article>
             ))}
           </div>
         ) : (
-          <p className="placeholder">Dodaj projekt, jesli chcesz pokazac dodatkowe potwierdzenie kompetencji.</p>
+          <p className="placeholder">Brak wpisów. Dodaj pierwszy projekt, jeśli chcesz pokazać dodatkowe potwierdzenie kompetencji.</p>
         )}
       </FormSection>
 
       <FormSection
-        title="Umiejetnosci"
-        description="Technologie i kompetencje, ktore chcesz uwzglednic w analizie."
-        summary={`${formValue.skill_entries.length} wpisow`}
-        defaultOpen
+        title="Umiejętności"
+        description="Technologie i kompetencje, które chcesz uwzględnić w analizie."
+        summary={`${formValue.skill_entries.length} wpisów`}
+        isOpen={openSections.skills}
+        onToggle={(nextOpen) => setSectionOpen("skills", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton
+              label="Dodaj"
+              onClick={() => handleAddCollectionEntry("skills", "skill_entries", createEmptySkillEntry)}
+            />
+            <SummaryActionButton
+              label={openSections.skills ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("skills")}
+            />
+          </>
+        }
       >
-        <div className="section-toolbar">
-          <button type="button" className="ghost-button" onClick={() => addCollectionEntry("skill_entries", createEmptySkillEntry)}>
-            Dodaj umiejetnosc
-          </button>
-        </div>
-
         {formValue.skill_entries.length > 0 ? (
           <div className="record-list">
             {formValue.skill_entries.map((entry, index) => (
               <article key={getCollectionEntryKey(entry, "skill", index)} className="record-card">
                 <div className="record-card-header">
                   <div>
-                    <h4>{entry.name || `Umiejetnosc ${index + 1}`}</h4>
+                      <h4>{entry.name || `Umiejętność ${index + 1}`}</h4>
                     <p>{entry.category || "Nowy wpis"}</p>
                   </div>
                   <button
@@ -1528,7 +1659,7 @@ export default function CandidateProfileForm({
                     className="ghost-button danger-ghost-button"
                     onClick={() => removeCollectionEntry("skill_entries", index)}
                   >
-                    Usun
+                    Usuń
                   </button>
                 </div>
 
@@ -1561,7 +1692,7 @@ export default function CandidateProfileForm({
                   </label>
 
                   <label className="field">
-                    <span>Lata doswiadczenia</span>
+                    <span>Lata doświadczenia</span>
                     <input
                       type="number"
                       min="0"
@@ -1582,25 +1713,36 @@ export default function CandidateProfileForm({
                   />
 
                   <TagListInput
-                    label="Zrodla potwierdzenia"
+                    label="Źródła potwierdzenia"
                     items={entry.evidence_sources}
                     onChange={(items) => updateCollectionEntry("skill_entries", index, "evidence_sources", items)}
                     placeholder="Np. exp_123"
-                    addLabel="Dodaj zrodlo"
+                    addLabel="Dodaj źródło"
                   />
                 </div>
               </article>
             ))}
           </div>
         ) : (
-          <p className="placeholder">Dodaj umiejetnosci, ktore warto brac pod uwage w matchingu.</p>
+          <p className="placeholder">Brak wpisów. Dodaj pierwszą umiejętność, którą warto brać pod uwagę w dopasowaniu.</p>
         )}
       </FormSection>
 
       <FormSection
-        title="Soft skills"
-        description="Jawnie wpisane umiejetnosci miekkie, ktore chcesz pokazac w profilu."
+        title="Umiejętności miękkie"
+        description="Jawnie wpisane soft skills, które chcesz pokazać w profilu."
         summary={`${formValue.soft_skill_entries.length} pozycji`}
+        isOpen={openSections.softSkills}
+        onToggle={(nextOpen) => setSectionOpen("softSkills", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton label="Dodaj" onClick={() => ensureSectionOpen("softSkills")} />
+            <SummaryActionButton
+              label={openSections.softSkills ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("softSkills")}
+            />
+          </>
+        }
       >
         <TagListInput
           label="Soft skills"
@@ -1608,13 +1750,25 @@ export default function CandidateProfileForm({
           onChange={(items) => updateTopLevelField("soft_skill_entries", items)}
           placeholder="Np. communication"
           addLabel="Dodaj soft skill"
+          emptyText="Brak wpisów. Dodaj pierwszą umiejętność miękką."
         />
       </FormSection>
 
       <FormSection
         title="Obszary zainteresowań"
-        description="Tematy, dziedziny i obszary, ktore chcesz jawnie powiazac ze swoim profilem."
+        description="Tematy, dziedziny i obszary, które chcesz jawnie powiązać ze swoim profilem."
         summary={`${formValue.interest_entries.length} pozycji`}
+        isOpen={openSections.interests}
+        onToggle={(nextOpen) => setSectionOpen("interests", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton label="Dodaj" onClick={() => ensureSectionOpen("interests")} />
+            <SummaryActionButton
+              label={openSections.interests ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("interests")}
+            />
+          </>
+        }
       >
         <TagListInput
           label="Obszary zainteresowań"
@@ -1622,13 +1776,28 @@ export default function CandidateProfileForm({
           onChange={(items) => updateTopLevelField("interest_entries", items)}
           placeholder="Np. automation"
           addLabel="Dodaj obszar"
+          emptyText="Brak wpisów. Dodaj pierwszy obszar zainteresowań."
         />
       </FormSection>
 
       <FormSection
         title="Edukacja"
-        description="Szkoly, uczelnie i kierunki studiow."
-        summary={`${formValue.education_entries.length} wpisow`}
+        description="Szkoły, uczelnie i kierunki studiów."
+        summary={`${formValue.education_entries.length} wpisów`}
+        isOpen={openSections.education}
+        onToggle={(nextOpen) => setSectionOpen("education", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton
+              label="Dodaj"
+              onClick={() => handleAddCollectionEntry("education", "education_entries", createEmptyEducationEntry)}
+            />
+            <SummaryActionButton
+              label={openSections.education ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("education")}
+            />
+          </>
+        }
       >
         <label className="field section-wide-field">
           <span>Tytuł pracy dyplomowej / Thesis</span>
@@ -1639,12 +1808,6 @@ export default function CandidateProfileForm({
             placeholder="Opcjonalnie, np. tytuł pracy inżynierskiej lub magisterskiej"
           />
         </label>
-
-        <div className="section-toolbar">
-          <button type="button" className="ghost-button" onClick={() => addCollectionEntry("education_entries", createEmptyEducationEntry)}>
-            Dodaj edukacje
-          </button>
-        </div>
 
         {formValue.education_entries.length > 0 ? (
           <div className="record-list">
@@ -1660,7 +1823,7 @@ export default function CandidateProfileForm({
                     className="ghost-button danger-ghost-button"
                     onClick={() => removeCollectionEntry("education_entries", index)}
                   >
-                    Usun
+                    Usuń
                   </button>
                 </div>
 
@@ -1733,16 +1896,29 @@ export default function CandidateProfileForm({
             ))}
           </div>
         ) : (
-          <p className="placeholder">Dodaj edukacje, jesli chcesz uwzglednic ja w analizie i CV.</p>
+          <p className="placeholder">Brak wpisów. Dodaj pierwszą edukację, jeśli chcesz uwzględnić ją w analizie i CV.</p>
         )}
       </FormSection>
 
-      <FormSection title="Jezyki" description="Jezyki obce i poziom ich znajomosci." summary={`${formValue.language_entries.length} wpisow`}>
-        <div className="section-toolbar">
-          <button type="button" className="ghost-button" onClick={() => addCollectionEntry("language_entries", createEmptyLanguageEntry)}>
-            Dodaj jezyk
-          </button>
-        </div>
+      <FormSection
+        title="Języki"
+        description="Języki obce i poziom ich znajomości."
+        summary={`${formValue.language_entries.length} wpisów`}
+        isOpen={openSections.languages}
+        onToggle={(nextOpen) => setSectionOpen("languages", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton
+              label="Dodaj"
+              onClick={() => handleAddCollectionEntry("languages", "language_entries", createEmptyLanguageEntry)}
+            />
+            <SummaryActionButton
+              label={openSections.languages ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("languages")}
+            />
+          </>
+        }
+      >
 
         {formValue.language_entries.length > 0 ? (
           <div className="record-list compact-record-list">
@@ -1750,7 +1926,7 @@ export default function CandidateProfileForm({
               <article key={getCollectionEntryKey(entry, "language", index)} className="record-card compact-record-card">
                 <div className="record-card-header">
                   <div>
-                    <h4>{entry.language_name || `Jezyk ${index + 1}`}</h4>
+                    <h4>{entry.language_name || `Język ${index + 1}`}</h4>
                     <p>{entry.proficiency_level || "Nowy wpis"}</p>
                   </div>
                   <button
@@ -1758,13 +1934,13 @@ export default function CandidateProfileForm({
                     className="ghost-button danger-ghost-button"
                     onClick={() => removeCollectionEntry("language_entries", index)}
                   >
-                    Usun
+                    Usuń
                   </button>
                 </div>
 
                 <div className="form-grid">
                   <label className="field">
-                    <span>Jezyk</span>
+                    <span>Język</span>
                     <input
                       type="text"
                       value={entry.language_name}
@@ -1785,21 +1961,29 @@ export default function CandidateProfileForm({
             ))}
           </div>
         ) : (
-          <p className="placeholder">Dodaj jezyki, ktore chcesz pokazac w profilu.</p>
+          <p className="placeholder">Brak wpisów. Dodaj pierwszy język, który chcesz pokazać w profilu.</p>
         )}
       </FormSection>
 
       <FormSection
         title="Certyfikaty"
         description="Certyfikaty, szkolenia i kursy warte pokazania."
-        summary={`${formValue.certificate_entries.length} wpisow`}
+        summary={`${formValue.certificate_entries.length} wpisów`}
+        isOpen={openSections.certificates}
+        onToggle={(nextOpen) => setSectionOpen("certificates", nextOpen)}
+        summaryActions={
+          <>
+            <SummaryActionButton
+              label="Dodaj"
+              onClick={() => handleAddCollectionEntry("certificates", "certificate_entries", createEmptyCertificateEntry)}
+            />
+            <SummaryActionButton
+              label={openSections.certificates ? "Zwiń" : "Rozwiń"}
+              onClick={() => toggleSectionOpen("certificates")}
+            />
+          </>
+        }
       >
-        <div className="section-toolbar">
-          <button type="button" className="ghost-button" onClick={() => addCollectionEntry("certificate_entries", createEmptyCertificateEntry)}>
-            Dodaj certyfikat
-          </button>
-        </div>
-
         {formValue.certificate_entries.length > 0 ? (
           <div className="record-list compact-record-list">
             {formValue.certificate_entries.map((entry, index) => (
@@ -1814,7 +1998,7 @@ export default function CandidateProfileForm({
                     className="ghost-button danger-ghost-button"
                     onClick={() => removeCollectionEntry("certificate_entries", index)}
                   >
-                    Usun
+                    Usuń
                   </button>
                 </div>
 
@@ -1860,18 +2044,26 @@ export default function CandidateProfileForm({
             ))}
           </div>
         ) : (
-          <p className="placeholder">Dodaj certyfikaty i szkolenia, jesli sa istotne dla ofert.</p>
+          <p className="placeholder">Brak wpisów. Dodaj pierwszy certyfikat lub szkolenie, jeśli są istotne dla ofert.</p>
         )}
       </FormSection>
 
       <FormSection
-        title="Reguly zaawansowane"
-        description="Dodatkowe ograniczenia, ktorych system ma pilnowac."
+        title="Reguły zaawansowane"
+        description="Dodatkowe ograniczenia, których system ma pilnować."
         summary="Opcjonalne"
+        isOpen={openSections.advanced}
+        onToggle={(nextOpen) => setSectionOpen("advanced", nextOpen)}
+        summaryActions={
+          <SummaryActionButton
+            label={openSections.advanced ? "Zwiń" : "Rozwiń"}
+            onClick={() => toggleSectionOpen("advanced")}
+          />
+        }
       >
         <div className="advanced-grid">
           <TagListInput
-            label="Zakazane umiejetnosci"
+            label="Zakazane umiejętności"
             items={formValue.immutable_rules.forbidden_skills}
             onChange={(items) => updateImmutableRules("forbidden_skills", items)}
             placeholder="Np. Java"
@@ -1901,7 +2093,7 @@ export default function CandidateProfileForm({
               formValue.immutable_rules.editing_rules,
             )}
             onChange={(value) => updateImmutableRules("editing_rules_text", value)}
-            placeholder="Kazda linia to osobna zasada"
+            placeholder="Każda linia to osobna zasada"
             rows={4}
           />
         </div>
@@ -1909,7 +2101,7 @@ export default function CandidateProfileForm({
 
       <RawJsonPanel
         className="raw-json-toggle profile-json-preview"
-        summary="Podglad danych technicznych"
+        summary="Podgląd danych technicznych"
         value={profilePreview}
       />
 

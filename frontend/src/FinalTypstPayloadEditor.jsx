@@ -32,17 +32,10 @@ function CharacterCounter({ value, limit, countedValue = null }) {
     .filter(Boolean)
     .join(" ");
 
-  const limitParts = [];
-  if (typeof limit?.target === "number") {
-    limitParts.push(`target ${limit.target}`);
-  }
-  if (typeof limit?.hard === "number") {
-    limitParts.push(`hard ${limit.hard}`);
-  }
-
   return (
     <p className={className}>
-      {count} znakow{limitParts.length ? ` · ${limitParts.join(" · ")}` : ""}
+      {count} znaków
+      {exceedsHard ? " · Przekroczony limit dla PDF" : ""}
     </p>
   );
 }
@@ -63,7 +56,7 @@ export default function FinalTypstPayloadEditor({
   autosaveStatus,
 }) {
   if (!payload) {
-    return <p className="placeholder">Otworz edytor, aby poprawic finalna wersje CV.</p>;
+    return <p className="placeholder">Otwórz edytor, aby poprawić finalną wersję CV.</p>;
   }
 
   const summaryLimit = getLimit(limitConfig, "summary", "target_chars", "hard_chars");
@@ -137,8 +130,8 @@ export default function FinalTypstPayloadEditor({
   return (
     <div className="final-editor">
       <div className="message info">
-        Edycja reczna zmienia tylko finalny dokument PDF. Nie zmienia profilu kandydata ani zapisanego draftu.
-        Zmiany sa zapisywane lokalnie w tej przegladarce.
+        Edycja ręczna zmienia tylko finalny dokument PDF. Nie zmienia profilu kandydata ani zapisanego draftu.
+        Zmiany są zapisywane lokalnie w tej przeglądarce.
       </div>
 
       {autosaveStatus ? (
@@ -146,7 +139,7 @@ export default function FinalTypstPayloadEditor({
       ) : null}
 
       <div className="manual-editor-source">
-        <span className="status-badge success">Zrodlo edycji</span>
+        <span className="status-badge success">Źródło edycji</span>
         <p className="helper-text">{sourceLabel}</p>
       </div>
 
@@ -176,7 +169,7 @@ export default function FinalTypstPayloadEditor({
                 <div className="record-card-header">
                   <div>
                     <h5>{entry.institution || `Edukacja ${index + 1}`}</h5>
-                    <p>{[entry.degree, entry.date].filter(Boolean).join(" · ") || "Brak szczegolow"}</p>
+                    <p>{[entry.degree, entry.date].filter(Boolean).join(" · ") || "Brak szczegółów"}</p>
                   </div>
                 </div>
                 <label className="field">
@@ -192,15 +185,15 @@ export default function FinalTypstPayloadEditor({
             ))}
           </div>
         ) : (
-          <EmptySection>Brak wpisow edukacji w payloadzie.</EmptySection>
+          <EmptySection>Brak wpisów edukacji w danych dokumentu.</EmptySection>
         )}
       </section>
 
       <section className="final-editor-section">
         <div className="section-header">
-          <h4>Doswiadczenie</h4>
+          <h4>Doświadczenie</h4>
           <p className="section-copy">
-            Firma, stanowisko i data wplywaja tylko na finalny dokument. Edytuj wording, jezyk lub literowki swiadomie.
+            Firma, stanowisko i data wpływają tylko na finalny dokument. Edytuj wording, język lub literówki świadomie.
           </p>
         </div>
         {experienceEntries.length ? (
@@ -258,14 +251,14 @@ export default function FinalTypstPayloadEditor({
                       </label>
                     ))
                   ) : (
-                    <EmptySection>Brak punktow do edycji w tym wpisie.</EmptySection>
+                    <EmptySection>Brak punktów do edycji w tym wpisie.</EmptySection>
                   )}
                 </div>
               </article>
             ))}
           </div>
         ) : (
-          <EmptySection>Brak wpisow doswiadczenia w payloadzie.</EmptySection>
+          <EmptySection>Brak wpisów doświadczenia w danych dokumentu.</EmptySection>
         )}
       </section>
 
@@ -273,7 +266,7 @@ export default function FinalTypstPayloadEditor({
         <div className="section-header">
           <h4>Projekty</h4>
           <p className="section-copy">
-            Nazwa projektu wplywa tylko na finalny dokument. Edytuj wording, jezyk lub literowki swiadomie.
+            Nazwa projektu wpływa tylko na finalny dokument. Edytuj wording, język lub literówki świadomie.
           </p>
         </div>
         {projectEntries.length ? (
@@ -309,19 +302,19 @@ export default function FinalTypstPayloadEditor({
             })}
           </div>
         ) : (
-          <EmptySection>Brak projektow w payloadzie.</EmptySection>
+          <EmptySection>Brak projektów w danych dokumentu.</EmptySection>
         )}
       </section>
 
       <section className="final-editor-section">
         <div className="section-header">
-          <h4>Umiejetnosci</h4>
+          <h4>Umiejętności</h4>
         </div>
         {skillEntries.length ? (
           <div className="final-editor-list">
             {skillEntries.map((item, index) => (
               <label className="field" key={`skill-${index}`}>
-                <span>Linia umiejetnosci {index + 1}</span>
+                <span>Linia umiejętności {index + 1}</span>
                 <input
                   type="text"
                   value={item ?? ""}
@@ -332,13 +325,13 @@ export default function FinalTypstPayloadEditor({
             ))}
           </div>
         ) : (
-          <EmptySection>Brak linii umiejetnosci w payloadzie.</EmptySection>
+          <EmptySection>Brak linii umiejętności w danych dokumentu.</EmptySection>
         )}
       </section>
 
       <section className="final-editor-section">
         <div className="section-header">
-          <h4>Jezyki i certyfikaty</h4>
+          <h4>Języki i certyfikaty</h4>
         </div>
         {languageCertificateEntries.length ? (
           <div className="final-editor-list">
@@ -355,19 +348,19 @@ export default function FinalTypstPayloadEditor({
             ))}
           </div>
         ) : (
-          <EmptySection>Brak jezykow lub certyfikatow w payloadzie.</EmptySection>
+          <EmptySection>Brak języków lub certyfikatów w danych dokumentu.</EmptySection>
         )}
       </section>
 
       <div className="manual-editor-actions">
         <button type="button" className="primary-button" onClick={onRender} disabled={renderLoading}>
-          {renderLoading ? "Renderowanie..." : "Renderuj edytowana wersje"}
+          {renderLoading ? "Generowanie..." : "Wygeneruj PDF z edycji"}
         </button>
         <button type="button" className="ghost-button" onClick={onReset} disabled={renderLoading}>
-          Przywroc wersje AI
+          Przywróć wersję AI
         </button>
         <button type="button" className="ghost-button danger-ghost-button" onClick={onClearAutosave} disabled={renderLoading}>
-          Wyczysc zapis roboczy
+          Wyczyść zapis roboczy
         </button>
       </div>
     </div>

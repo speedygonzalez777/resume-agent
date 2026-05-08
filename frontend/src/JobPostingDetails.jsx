@@ -97,7 +97,7 @@ function buildJobMetaChips(jobPosting) {
  * @param {{jobPosting: object, rawJsonLabel?: string}} props Component props.
  * @returns {JSX.Element} Structured JobPosting detail section.
  */
-export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON" }) {
+export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Szczegóły techniczne" }) {
   const responsibilities = Array.isArray(jobPosting?.responsibilities) ? jobPosting.responsibilities : [];
   const requirements = Array.isArray(jobPosting?.requirements) ? jobPosting.requirements : [];
   const keywords = buildDisplayKeywords(jobPosting?.keywords);
@@ -108,7 +108,7 @@ export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON
     <div className="job-details">
       <header className="detail-header">
         <div>
-          <h3 className="detail-title">{jobPosting.title || "Brak tytulu"}</h3>
+          <h3 className="detail-title">{jobPosting.title || "Brak tytułu"}</h3>
           <p className="detail-company">{jobPosting.company_name || "Brak nazwy firmy"}</p>
         </div>
         {metaChips.length > 0 ? (
@@ -147,7 +147,7 @@ export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON
       </section>
 
       <section className="detail-section">
-        <h4>Obowiazki</h4>
+        <h4>Obowiązki</h4>
         {responsibilities.length > 0 ? (
           <ul className="detail-list">
             {responsibilities.map((item, index) => (
@@ -155,7 +155,7 @@ export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON
             ))}
           </ul>
         ) : (
-          <p className="placeholder">Brak zapisanych obowiazkow.</p>
+          <p className="placeholder">Brak zapisanych obowiązków.</p>
         )}
       </section>
 
@@ -169,7 +169,7 @@ export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON
               ))}
             </ul>
           ) : (
-            <p className="placeholder">Brak wymagan typu must-have.</p>
+            <p className="placeholder">Brak wymagań typu must-have.</p>
           )}
         </section>
 
@@ -182,13 +182,13 @@ export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON
               ))}
             </ul>
           ) : (
-            <p className="placeholder">Brak wymagan typu nice-to-have.</p>
+            <p className="placeholder">Brak wymagań typu nice-to-have.</p>
           )}
         </section>
       </div>
 
       <section className="detail-section">
-        <h4>Slowa kluczowe</h4>
+        <h4>Słowa kluczowe</h4>
         {keywords.length > 0 ? (
           <div className="chip-row">
             {keywords.map((keyword, index) => (
@@ -198,7 +198,7 @@ export default function JobPostingDetails({ jobPosting, rawJsonLabel = "Raw JSON
             ))}
           </div>
         ) : (
-          <p className="placeholder">Brak zapisanych slow kluczowych.</p>
+          <p className="placeholder">Brak zapisanych słów kluczowych.</p>
         )}
       </section>
 

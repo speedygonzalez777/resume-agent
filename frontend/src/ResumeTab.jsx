@@ -19,10 +19,13 @@ import {
   refineResumeDraft,
   saveMatchResult,
 } from "./api";
-import ChangeReportDetails from "./ChangeReportDetails";
-import RawJsonPanel from "./RawJsonPanel";
-import ResumeDraftDetails from "./ResumeDraftDetails";
-import TagListInput from "./TagListInput";
+import DocumentWorkspace from "./components/document/DocumentWorkspace";
+import DraftGenerationStep from "./components/resume/DraftGenerationStep";
+import DraftReviewStep from "./components/resume/DraftReviewStep";
+import MatchStep from "./components/resume/MatchStep";
+import ProfileJobSelectionStep from "./components/resume/ProfileJobSelectionStep";
+import ResumeContextPanel from "./components/resume/ResumeContextPanel";
+import ResumeDebugPanel from "./components/resume/ResumeDebugPanel";
 
 /**
  * Convert an unknown error into a short user-facing message.
@@ -34,7 +37,7 @@ function getErrorMessage(error) {
   if (error instanceof Error && error.message) {
     return error.message;
   }
-  return "Wystapil nieoczekiwany blad.";
+  return "Wystąpił nieoczekiwany błąd.";
 }
 
 /**
@@ -47,10 +50,10 @@ function getRefinementErrorMessage(error) {
   const message = getErrorMessage(error);
 
   if (message.includes("AI CV refinement is unavailable")) {
-    return "Nie udalo sie uruchomic AI poprawy draftu. Bazowy draft nadal jest dostepny.";
+    return "Nie udało się uruchomić poprawy AI. Bazowy draft nadal jest dostępny.";
   }
 
-  return "Nie udalo sie przygotowac AI poprawionej wersji CV. Bazowy draft nadal jest dostepny.";
+  return "Nie udało się przygotować poprawionej wersji CV. Bazowy draft nadal jest dostępny.";
 }
 
 /**
@@ -86,12 +89,12 @@ function formatSavedAt(savedAt) {
  */
 function describeMatchSource(matchSource) {
   if (matchSource?.type === "snapshot") {
-    return `Uzywane jest swieze dopasowanie robocze zapisane jako snapshot #${matchSource.id}.`;
+    return `Używany jest świeży wynik dopasowania zapisany jako wynik #${matchSource.id}.`;
   }
   if (matchSource?.type === "session_unsaved") {
-    return "Uzywane jest swieze dopasowanie robocze z tej sesji, ale snapshot historii nie zostal zapisany.";
+    return "Używany jest świeży wynik dopasowania z tej sesji, ale nie został zapisany w historii.";
   }
-  return "Brak aktywnego dopasowania roboczego dla tej pary. Przygotuj nowe dopasowanie albo wygeneruj CV.";
+  return "Brak aktywnego wyniku dla tej pary. Sprawdź dopasowanie albo wygeneruj draft CV.";
 }
 
 /**
@@ -333,12 +336,48 @@ function buildPreviewList(values, limit = 3) {
     : [];
 }
 
+function getResumeWorkflowStage({ hasPairSelected, activeMatchResult, hasDraftArtifacts }) {
+  if (hasDraftArtifacts) {
+    return "review";
+  }
+  if (activeMatchResult) {
+    return "draft";
+  }
+  if (hasPairSelected) {
+    return "match";
+  }
+  return "selection";
+}
+
+function describeResumeGenerationMode(generationMode) {
+  if (generationMode === "openai_structured") {
+    return "Generacja AI";
+  }
+  if (generationMode === "rule_based_fallback") {
+    return "Tryb zapasowy";
+  }
+  return "Brak danych";
+}
+
+function buildMatchSourceMeta(matchSource) {
+  if (matchSource?.type === "session_unsaved") {
+    return "Aktywny wynik pochodzi z bieżącej sesji i nie zastępuje historii zapisanej wcześniej.";
+  }
+  if (matchSource?.type === "saved") {
+    return "Aktywny wynik został załadowany razem z zapisanym draftem.";
+  }
+  if (matchSource?.type === "snapshot") {
+    return "Aktywny wynik został świeżo przeliczony i zapisany w historii.";
+  }
+  return null;
+}
+
 /**
  * Render the tab used for generating a structured CV draft from saved inputs.
  *
  * @returns {JSX.Element} Resume-generation tab content.
  */
-export default function ResumeTab({ jobListRefreshVersion = 0 }) {
+export default function ResumeTab({ jobListRefreshVersion = 0, onGoToDocument = null }) {
   const [profiles, setProfiles] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -376,6 +415,7 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
   const [refinementDirty, setRefinementDirty] = useState(false);
   const [resumeDraftView, setResumeDraftView] = useState("base");
   const [developerDebugState, setDeveloperDebugState] = useState(createEmptyDeveloperDebugState);
+  const [expandedWorkflowStep, setExpandedWorkflowStep] = useState(null);
   const [message, setMessage] = useState(null);
 
   /**
@@ -518,6 +558,7 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
     setSelectedProfileDetail(null);
     resetGeneratedDraft();
     setMessage(null);
+    setExpandedWorkflowStep(profileId && selectedJobId ? "match" : "selection");
 
     if (!profileId) {
       return;
@@ -545,6 +586,7 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
     setSelectedJobDetail(null);
     resetGeneratedDraft();
     setMessage(null);
+    setExpandedWorkflowStep(selectedProfileId && jobId ? "match" : "selection");
 
     if (!jobId) {
       return;
@@ -666,7 +708,7 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
           });
         } catch (error) {
           setMatchLookupError(
-            `Draft zostal otwarty, ale nie udalo sie zaladowac powiazanego snapshotu dopasowania: ${getErrorMessage(error)}`,
+            `Draft został otwarty, ale nie udało się załadować powiązanego wyniku dopasowania: ${getErrorMessage(error)}`,
           );
         }
       } else {
@@ -676,9 +718,10 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
       setMessage({
         type: "info",
         text: storedDraft.has_refined_version
-          ? "Otworzono zapisany draft CV z dostepna wersja AI-refined."
+          ? "Otworzono zapisany draft CV z dostępną poprawą AI."
           : "Otworzono zapisany draft CV.",
       });
+      setExpandedWorkflowStep("review");
     } catch (error) {
       setMessage({ type: "error", text: getErrorMessage(error) });
     } finally {
@@ -813,7 +856,7 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
         snapshotSaved = true;
       } catch (error) {
         setMatchLookupError(
-          `Dopasowanie zostalo przeliczone, ale snapshot historii nie zostal zapisany: ${getErrorMessage(error)}`,
+          `Dopasowanie zostało przeliczone, ale wynik nie został zapisany w historii: ${getErrorMessage(error)}`,
         );
       }
 
@@ -838,9 +881,10 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
       setMessage({
         type: "success",
         text: snapshotSaved
-          ? "Dopasowanie zostalo przeliczone od nowa i zapisane jako snapshot historii."
-          : "Dopasowanie zostalo przeliczone od nowa, ale snapshot historii nie zostal zapisany.",
+          ? "Dopasowanie zostało przeliczone od nowa i zapisane w historii."
+          : "Dopasowanie zostało przeliczone od nowa, ale wynik nie został zapisany w historii.",
       });
+      setExpandedWorkflowStep("draft");
     } catch (error) {
       setMessage({ type: "error", text: getErrorMessage(error) });
     }
@@ -860,9 +904,10 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
       setMessage({
         type: "info",
         text: snapshotSaved
-          ? "Matching debug zostal policzony przez route debugowy i zapisany jako snapshot historii."
-          : "Matching debug zostal policzony przez route debugowy, ale snapshot historii nie zostal zapisany.",
+          ? "Debug dopasowania został policzony i zapisany w historii."
+          : "Debug dopasowania został policzony, ale wynik nie został zapisany w historii.",
       });
+      setExpandedWorkflowStep("draft");
     } catch (error) {
       setMessage({ type: "error", text: getErrorMessage(error) });
     }
@@ -933,15 +978,16 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
         payload.persistence_warning
           ? {
               type: "info",
-              text: `Draft CV zostal wygenerowany, ale nie zostal zapisany lokalnie: ${payload.persistence_warning}`,
+              text: `Draft CV został wygenerowany, ale nie został zapisany lokalnie: ${payload.persistence_warning}`,
             }
           : {
               type: "success",
               text: payload.resume_draft_record_id
-                ? `Draft CV zostal wygenerowany i zapisany jako draft #${payload.resume_draft_record_id}.`
-                : "Draft CV zostal wygenerowany.",
+                ? `Draft CV został wygenerowany i zapisany jako draft #${payload.resume_draft_record_id}.`
+                : "Draft CV został wygenerowany.",
             },
       );
+      setExpandedWorkflowStep("review");
     } catch (error) {
       setMessage({ type: "error", text: getErrorMessage(error) });
     } finally {
@@ -1018,13 +1064,14 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
         payload.persistence_warning
           ? {
               type: "info",
-              text: `AI przygotowalo poprawiona wersje draftu, ale nie udalo sie zapisac tej aktualizacji: ${payload.persistence_warning}`,
+              text: `AI przygotowało poprawioną wersję draftu, ale nie udało się zapisać tej aktualizacji: ${payload.persistence_warning}`,
             }
           : {
               type: "success",
-              text: "AI przygotowalo poprawiona wersje draftu. Bazowa wersja nadal jest dostepna jednym kliknieciem.",
+              text: "AI przygotowało poprawioną wersję draftu. Bazowa wersja nadal jest dostępna jednym kliknięciem.",
             },
       );
+      setExpandedWorkflowStep("review");
     } catch (error) {
       setMessage({ type: "error", text: getRefinementErrorMessage(error) });
     } finally {
@@ -1040,7 +1087,7 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
   const hasRefinementGuidance = hasAnyRefinementGuidance(refinementGuidance);
   const hasRefinedResumeDraft = Boolean(refinedResumeArtifacts?.refined_resume_draft);
   const refinementStatusLabel = refinementDirty
-    ? "Wskazowki zmienione"
+    ? "Wskazówki zmienione"
     : hasRefinedResumeDraft
       ? "AI draft gotowy"
       : hasRefinementGuidance
@@ -1052,13 +1099,14 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
       : resumeArtifacts?.resume_draft ?? null;
   const currentResumeDraftRecordId = resumeArtifacts?.resume_draft_record_id ?? null;
   const activeMatchResult = activeMatchSession.matchResult;
-  const activeMatchingHandoff = activeMatchSession.matchingHandoff;
   const matchSource = activeMatchSession.source;
   const selectedHistoryPreview = historyPreviewId ? historyPreviewCache[historyPreviewId] ?? null : null;
   const selectedHistoryPreviewMatchResult = selectedHistoryPreview?.payload ?? null;
   const selectedHistoryPreviewStats = summarizeRequirementStatuses(selectedHistoryPreviewMatchResult);
   const selectedHistoryStrengthsPreview = buildPreviewList(selectedHistoryPreviewMatchResult?.strengths);
   const selectedHistoryGapsPreview = buildPreviewList(selectedHistoryPreviewMatchResult?.gaps);
+  const activeMatchStrengthsPreview = buildPreviewList(activeMatchResult?.strengths);
+  const activeMatchGapsPreview = buildPreviewList(activeMatchResult?.gaps);
   const matchingDebugEnvelope = {
     request_body: developerDebugState.lastMatchingRequestBody,
     response_body: developerDebugState.lastMatchingResponseBody,
@@ -1069,605 +1117,233 @@ export default function ResumeTab({ jobListRefreshVersion = 0 }) {
     response_body: developerDebugState.lastResumeResponseBody,
     request_body_unavailable_reason: developerDebugState.lastResumeRequestBodyUnavailableReason,
   };
+  const hasPairSelected = Boolean(selectedProfileId && selectedJobId);
+  const hasDraftArtifacts = Boolean(resumeArtifacts?.resume_draft);
+  const activeMatchSourceId =
+    matchSource?.type === "snapshot" || matchSource?.type === "saved"
+      ? matchSource.id ?? null
+      : null;
+  const workflowStage = getResumeWorkflowStage({
+    hasPairSelected,
+    activeMatchResult,
+    hasDraftArtifacts,
+  });
+  const draftGenerationModeLabel = describeResumeGenerationMode(resumeArtifacts?.generation_mode);
+  const matchSourceLabel = describeMatchSource(matchSource);
+  const matchSourceMeta = buildMatchSourceMeta(matchSource);
+  const flowIsLoading =
+    lookupLoading ||
+    selectedProfileLoading ||
+    selectedJobLoading ||
+    matchLoading ||
+    generateLoading ||
+    refineLoading ||
+    Boolean(resumeDraftLoadingId);
+  const defaultExpandedStep =
+    workflowStage === "selection"
+      ? "selection"
+      : workflowStage === "match"
+        ? "match"
+        : workflowStage === "draft"
+          ? "draft"
+          : "review";
+  const canExpandMatch = hasPairSelected;
+  const canExpandDraft = Boolean(activeMatchResult || hasDraftArtifacts);
+  const canExpandReview = hasDraftArtifacts;
+  const effectiveExpandedStep = expandedWorkflowStep === "selection"
+    ? "selection"
+    : expandedWorkflowStep === "match" && canExpandMatch
+      ? "match"
+      : expandedWorkflowStep === "draft" && canExpandDraft
+        ? "draft"
+        : expandedWorkflowStep === "review" && canExpandReview
+          ? "review"
+          : expandedWorkflowStep === "none"
+            ? null
+          : defaultExpandedStep;
+  const selectionExpanded = effectiveExpandedStep === "selection";
+  const matchExpanded = effectiveExpandedStep === "match";
+  const draftExpanded = effectiveExpandedStep === "draft";
+  const reviewExpanded = effectiveExpandedStep === "review";
+  const selectionStepMode = hasPairSelected
+    ? selectionExpanded
+      ? "editing"
+      : "completed"
+    : "active";
+  const matchStepMode = !hasPairSelected
+    ? "locked"
+    : matchExpanded
+      ? activeMatchResult
+        ? "editing"
+        : "active"
+      : activeMatchResult
+        ? "completed"
+        : "available";
+  const draftStepMode = !hasDraftArtifacts && !activeMatchResult
+    ? "locked"
+    : draftExpanded
+      ? hasDraftArtifacts
+        ? "editing"
+        : "active"
+      : hasDraftArtifacts
+        ? "completed"
+        : "available";
+  const reviewStepMode = !hasDraftArtifacts
+    ? "locked"
+    : reviewExpanded
+      ? "active"
+      : "completed";
 
   return (
-    <section className="tab-content">
+    <section className="tab-content resume-tab-content">
       <div className="section-header tab-header">
         <div>
-          <h2>Przygotowanie CV</h2>
+          <h2>Dopasowanie i draft</h2>
           <p className="section-copy">
-            Przygotuj dopasowanie dla wybranego profilu i oferty, a nastepnie wygeneruj roboczy draft CV.
+            Sprawdź dopasowanie wybranego profilu do oferty, a następnie wygeneruj draft CV.
           </p>
         </div>
       </div>
 
       {message ? <div className={`message ${message.type}`}>{message.text}</div> : null}
       {lookupError ? <div className="message error">{lookupError}</div> : null}
-      {matchLookupError ? <div className="message error">{matchLookupError}</div> : null}
-
-      <section className="section-card section-wide">
-        <div className="section-header section-header-inline">
-          <div>
-            <h3>Konfiguracja generowania</h3>
-            <p className="section-copy">
-              Przygotuj dopasowanie dla wybranego profilu i oferty, a nastepnie wygeneruj CV.
-            </p>
-          </div>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => void refreshSelectorData()}
-            disabled={lookupLoading || matchLoading || generateLoading || refineLoading}
-          >
-            {lookupLoading ? "Odswiezanie..." : "Odswiez listy"}
-          </button>
-        </div>
-
-        <div className="resume-config-stack">
-          <div className="form-grid resume-form-grid">
-            <label className="field">
-              <span>Zapisany profil</span>
-              <select
-                className="select-input"
-                value={selectedProfileId ?? ""}
-                onChange={(event) => void loadSelectedProfile(parseSelectedId(event.target.value))}
-                disabled={lookupLoading || matchLoading || generateLoading || refineLoading}
-              >
-                <option value="">Wybierz profil</option>
-                {profiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.full_name} ({profile.email})
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="field">
-              <span>Zapisana oferta</span>
-              <select
-                className="select-input"
-                value={selectedJobId ?? ""}
-                onChange={(event) => void loadSelectedJob(parseSelectedId(event.target.value))}
-                disabled={lookupLoading || matchLoading || generateLoading || refineLoading}
-              >
-                <option value="">Wybierz oferte</option>
-                {jobs.map((job) => (
-                  <option key={job.id} value={job.id}>
-                    {job.title} - {job.company_name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="resume-actions" role="group" aria-label="Akcje generowania CV">
-            <button
-              type="button"
-              className="ghost-button resume-secondary-action"
-              onClick={handleAnalyzeClick}
-              disabled={!canGenerate || matchLoading || generateLoading || refineLoading}
-            >
-              {matchLoading ? "Przygotowywanie..." : "Przygotuj dopasowanie do CV"}
-            </button>
-            <button
-              type="button"
-              className="primary-button resume-primary-action"
-              onClick={handleGenerateClick}
-              disabled={!canGenerate || matchLoading || generateLoading || refineLoading}
-            >
-              {generateLoading ? "Generowanie..." : "Generuj CV"}
-            </button>
-          </div>
-        </div>
-
-        <div className="selection-grid resume-config-grid">
-          <article className="selection-card">
-            <h4>Wybrany profil</h4>
-            {selectedProfileLoading ? (
-              <p className="placeholder">Ladowanie profilu...</p>
-            ) : selectedProfileDetail?.payload ? (
-              <>
-                <strong className="selection-card-title">{selectedProfileDetail.payload.personal_info.full_name}</strong>
-                <p className="detail-text">{selectedProfileDetail.payload.personal_info.email}</p>
-                <p className="detail-text">{selectedProfileDetail.payload.personal_info.location}</p>
-                <p className="helper-text">
-                  ID: {selectedProfileDetail.id} · Zapisano: {formatSavedAt(selectedProfileDetail.saved_at)}
-                </p>
-              </>
-            ) : (
-              <p className="placeholder">Wybierz zapisany profil.</p>
-            )}
-          </article>
-
-          <article className="selection-card">
-            <h4>Wybrana oferta</h4>
-            {selectedJobLoading ? (
-              <p className="placeholder">Ladowanie oferty...</p>
-            ) : selectedJobDetail?.payload ? (
-              <>
-                <strong className="selection-card-title">{selectedJobDetail.payload.title}</strong>
-                <p className="detail-text">{selectedJobDetail.payload.company_name}</p>
-                <p className="detail-text">{selectedJobDetail.payload.location}</p>
-                <p className="helper-text">
-                  ID: {selectedJobDetail.id} · Zapisano: {formatSavedAt(selectedJobDetail.saved_at)}
-                </p>
-              </>
-            ) : (
-              <p className="placeholder">Wybierz zapisana oferte.</p>
-            )}
-          </article>
-
-          <article className="selection-card">
-            <h4>Dopasowanie uzyte do CV</h4>
-            {matchLoading ? (
-              <p className="placeholder">Ladowanie dopasowania...</p>
-            ) : (
-              <>
-                <p className="detail-text">{describeMatchSource(matchSource)}</p>
-                {matchSource?.type === "snapshot" && matchSource?.savedAt ? (
-                  <p className="helper-text">Zapisano: {formatSavedAt(matchSource.savedAt)}</p>
-                ) : null}
-
-                {activeMatchResult ? (
-                  <div className="match-source-status-grid">
-                    <div className="result-metric-card compact-metric-card">
-                      <span className="metric-label">Ocena dopasowania</span>
-                      <strong className="metric-value">{Math.round(activeMatchResult.overall_score * 100)}%</strong>
-                    </div>
-                    <div className="result-metric-card compact-metric-card">
-                      <span className="metric-label">Klasyfikacja</span>
-                      <span className={`status-badge ${getBadgeTone(activeMatchResult.fit_classification)}`}>
-                        {activeMatchResult.fit_classification}
-                      </span>
-                    </div>
-                    <div className="result-metric-card compact-metric-card">
-                      <span className="metric-label">Rekomendacja</span>
-                      <span className={`status-badge ${getBadgeTone(activeMatchResult.recommendation)}`}>
-                        {activeMatchResult.recommendation}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="helper-text">Historia jest archiwalna. Aktywny wynik roboczy powstaje dopiero po swiezym przeliczeniu.</p>
-                )}
-              </>
-            )}
-          </article>
-        </div>
-
-        <details className="raw-json-toggle debug-panel">
-          <summary>Debug (developerskie)</summary>
-          <div className="debug-panel-body">
-            <div className="actions debug-action-row">
-              <button
-              type="button"
-              className="ghost-button"
-              onClick={handleAnalyzeDebugClick}
-              disabled={!canGenerate || matchLoading || generateLoading || refineLoading}
-            >
-                {matchLoading ? "Przygotowywanie..." : "Uruchom matching debug"}
-              </button>
-            </div>
-
-            <p className="helper-text">
-              matching_handoff:{" "}
-              {describeResumeMatchingHandoff(
-                developerDebugState.lastResumeMatchingHandoff,
-                developerDebugState.lastResumeRequestBodyUnavailableReason,
-              )}
-            </p>
-
-            <RawJsonPanel summary="Raw JSON matching" value={matchingDebugEnvelope} />
-
-            <RawJsonPanel
-              summary="Raw JSON resume"
-              value={resumeDebugEnvelope}
-              helperText={developerDebugState.lastResumeRequestBodyUnavailableReason}
-            />
-          </div>
-        </details>
-
-        <div className="section-header" style={{ marginTop: "20px" }}>
-          <div>
-            <h3>Historia snapshotow dopasowania</h3>
-            <p className="section-copy">
-              Archiwalne wyniki dla tej pary profilu i oferty. Nie ustawiaja automatycznie aktywnego dopasowania roboczego.
-            </p>
-          </div>
-        </div>
-
-        {historyError ? <div className="message error">{historyError}</div> : null}
-
-        {historyLoading ? (
-          <p className="placeholder">Ladowanie historii dopasowan...</p>
-        ) : !selectedProfileId || !selectedJobId ? (
-          <p className="placeholder">Wybierz profil i oferte, aby zobaczyc snapshoty historii.</p>
-        ) : matchHistory.length > 0 ? (
-          <div className="history-list-wrapper">
-            <div className="history-list">
-              {matchHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className={`history-item${
-                    (matchSource?.type === "snapshot" || matchSource?.type === "saved") && matchSource?.id === item.id
-                      ? " active"
-                      : ""
-                  }`}
-                >
-                  <div>
-                    <span className="history-title">Snapshot #{item.id}</span>
-                    <span className="history-company">
-                      {Math.round(item.overall_score * 100)}% · {item.fit_classification}
-                    </span>
-                    <span className="history-meta">Rekomendacja: {item.recommendation}</span>
-                    <span className="history-meta history-meta-secondary">
-                      Zapisano: {formatSavedAt(item.saved_at)}
-                    </span>
-                  </div>
-                  <div className="history-item-actions">
-                    <button
-                      type="button"
-                      className="ghost-button"
-                      onClick={() => void handleHistoryPreviewToggle(item.id)}
-                      disabled={historyPreviewLoadingId === item.id}
-                    >
-                      {historyPreviewLoadingId === item.id
-                        ? "Ladowanie..."
-                        : historyPreviewId === item.id
-                          ? "Ukryj szczegoly"
-                          : "Podglad"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <p className="placeholder">Brak zapisanych snapshotow dla tej pary.</p>
-        )}
-
-        {historyPreviewError ? <div className="message error">{historyPreviewError}</div> : null}
-
-        {selectedHistoryPreviewMatchResult ? (
-          <section className="detail-section">
-            <div className="section-header section-header-inline">
-              <div>
-                <h4>Szczegoly snapshotu #{selectedHistoryPreview.id}</h4>
-                <p className="section-copy">
-                  Archiwalny podglad porownawczy dla wybranego snapshotu historii.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={() => setHistoryPreviewId(null)}
-              >
-                Zamknij podglad
-              </button>
-            </div>
-
-            <div className="result-summary-grid resume-report-summary-grid">
-              <div className="result-metric-card">
-                <span className="metric-label">Ocena dopasowania</span>
-                <strong className="metric-value">
-                  {Math.round(selectedHistoryPreviewMatchResult.overall_score * 100)}%
-                </strong>
-              </div>
-              <div className="result-metric-card">
-                <span className="metric-label">Klasyfikacja</span>
-                <span className={`status-badge ${getBadgeTone(selectedHistoryPreviewMatchResult.fit_classification)}`}>
-                  {selectedHistoryPreviewMatchResult.fit_classification}
-                </span>
-              </div>
-              <div className="result-metric-card">
-                <span className="metric-label">Rekomendacja</span>
-                <span className={`status-badge ${getBadgeTone(selectedHistoryPreviewMatchResult.recommendation)}`}>
-                  {selectedHistoryPreviewMatchResult.recommendation}
-                </span>
-              </div>
-              <div className="result-metric-card">
-                <span className="metric-label">Zapisano</span>
-                <strong className="metric-value compact-metric-value">
-                  {formatSavedAt(selectedHistoryPreview.saved_at)}
-                </strong>
-              </div>
-            </div>
-
-            <div className="match-source-status-grid">
-              <div className="result-metric-card compact-metric-card">
-                <span className="metric-label">Matched</span>
-                <strong className="metric-value">{selectedHistoryPreviewStats.matched}</strong>
-              </div>
-              <div className="result-metric-card compact-metric-card">
-                <span className="metric-label">Partial</span>
-                <strong className="metric-value">{selectedHistoryPreviewStats.partial}</strong>
-              </div>
-              <div className="result-metric-card compact-metric-card">
-                <span className="metric-label">Missing</span>
-                <strong className="metric-value">{selectedHistoryPreviewStats.missing}</strong>
-              </div>
-              <div className="result-metric-card compact-metric-card">
-                <span className="metric-label">Not verifiable</span>
-                <strong className="metric-value">{selectedHistoryPreviewStats.notVerifiable}</strong>
-              </div>
-            </div>
-
-            <p className="detail-text">
-              {selectedHistoryPreviewMatchResult.final_summary || "Brak podsumowania dla tego snapshotu."}
-            </p>
-
-            <div className="result-columns">
-              <section className="detail-section">
-                <h5>Preview strengths</h5>
-                {selectedHistoryStrengthsPreview.length > 0 ? (
-                  <ul className="detail-list">
-                    {selectedHistoryStrengthsPreview.map((item, index) => (
-                      <li key={`${item}-${index}`}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="placeholder">Brak mocnych stron do podgladu.</p>
-                )}
-              </section>
-
-              <section className="detail-section">
-                <h5>Preview gaps</h5>
-                {selectedHistoryGapsPreview.length > 0 ? (
-                  <ul className="detail-list">
-                    {selectedHistoryGapsPreview.map((item, index) => (
-                      <li key={`${item}-${index}`}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="placeholder">Brak luk do podgladu.</p>
-                )}
-              </section>
-            </div>
-          </section>
-        ) : null}
-
-        <div className="section-header" style={{ marginTop: "20px" }}>
-          <div>
-            <h3>Zapisane drafty CV</h3>
-            <p className="section-copy">
-              Wroc do wczesniej wygenerowanych draftow bez ponownego uruchamiania generacji.
-            </p>
-          </div>
-        </div>
-
-        {resumeDraftHistoryError ? <div className="message error">{resumeDraftHistoryError}</div> : null}
-
-        {resumeDraftHistoryLoading ? (
-          <p className="placeholder">Ladowanie zapisanych draftow...</p>
-        ) : !selectedProfileId || !selectedJobId ? (
-          <p className="placeholder">Wybierz profil i oferte, aby zobaczyc zapisane drafty.</p>
-        ) : resumeDraftHistory.length > 0 ? (
-          <div className="history-list-wrapper">
-            <div className="history-list">
-              {resumeDraftHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className={`history-item${currentResumeDraftRecordId === item.id ? " active" : ""}`}
-                >
-                  <div>
-                    <span className="history-title">Draft #{item.id}</span>
-                    <span className="history-company">
-                      {item.target_job_title || "Brak tytulu"} · {item.target_company_name || "Brak firmy"}
-                    </span>
-                    <span className="history-meta">
-                      {item.has_refined_version ? "AI-refined dostepny" : "Tylko bazowy draft"}
-                    </span>
-                    <span className="history-meta history-meta-secondary">
-                      Zapisano: {formatSavedAt(item.saved_at)} · Aktualizacja: {formatSavedAt(item.updated_at)}
-                    </span>
-                  </div>
-                  <div className="history-item-actions">
-                    <button
-                      type="button"
-                      className="ghost-button"
-                      onClick={() => void handleSavedResumeDraftOpen(item.id)}
-                      disabled={resumeDraftLoadingId === item.id}
-                    >
-                      {resumeDraftLoadingId === item.id ? "Ladowanie..." : "Otworz"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <p className="placeholder">Brak zapisanych draftow dla tej pary.</p>
-        )}
-
-        <div className="resume-info-note" role="note" aria-label="Informacja o liscie motywacyjnym">
-          Na tym etapie dostepne jest generowanie CV. List motywacyjny zostanie dodany pozniej.
-        </div>
-
-      </section>
-
-      <div className="document-results-grid">
-        <section className="section-card scroll-panel">
-          <div className="section-header">
-            <div>
-              <h3>Podglad CV</h3>
-              <p className="section-copy">
-                {hasRefinedResumeDraft && resumeDraftView === "refined"
-                  ? "Czytelny podglad draftu po opcjonalnym AI refinement."
-                  : "Czytelny podglad wygenerowanego draftu CV."}
-              </p>
-              {currentResumeDraftRecordId ? (
-                <p className="helper-text">
-                  Aktywny zapisany draft #{currentResumeDraftRecordId}
-                  {resumeArtifacts?.resume_draft_saved_at ? ` · zapisano ${formatSavedAt(resumeArtifacts.resume_draft_saved_at)}` : ""}
-                </p>
-              ) : null}
-            </div>
-          </div>
-
-          {hasRefinedResumeDraft ? (
-            <div className="resume-version-toolbar">
-              <div>
-                <h4>Wersja podgladu</h4>
-                <p className="section-copy">
-                  {resumeDraftView === "refined"
-                    ? "Ogladasz AI poprawiona wersje. Bazowy draft nadal jest dostepny obok."
-                    : "Ogladasz bazowy draft. AI poprawiona wersja jest dostepna jednym kliknieciem."}
-                </p>
-              </div>
-              <div className="resume-version-switcher" role="group" aria-label="Wersja podgladu draftu">
-                <button
-                  type="button"
-                  className={`resume-version-button${resumeDraftView === "base" ? " active" : ""}`}
-                  onClick={() => setResumeDraftView("base")}
-                >
-                  Bazowy draft
-                </button>
-                <button
-                  type="button"
-                  className={`resume-version-button${resumeDraftView === "refined" ? " active" : ""}`}
-                  onClick={() => setResumeDraftView("refined")}
-                >
-                  AI poprawiony draft
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="scroll-panel-body document-panel-body">
-            {displayedResumeDraft ? (
-              <ResumeDraftDetails resumeDraft={displayedResumeDraft} />
-            ) : (
-              <p className="placeholder">
-                Wybierz zapisany profil i oferte, a potem wygeneruj nowy draft CV albo otworz zapisany draft dla tej pary.
-              </p>
-            )}
-          </div>
-
-          {resumeArtifacts?.resume_draft ? (
-            <details className="resume-refinement-panel">
-              <summary className="resume-refinement-summary">
-                <div>
-                  <strong>Popraw draft CV (AI)</strong>
-                  <p>
-                    Opcjonalnie dopracuj gotowy draft bez generowania CV od nowa. Bazowa wersja zawsze pozostaje do dyspozycji.
-                  </p>
-                </div>
-                <span className="section-count-badge">{refinementStatusLabel}</span>
-              </summary>
-
-              <div className="resume-refinement-body">
-                <p className="helper-text">
-                  Wpisz kilka prostych wskazowek, a AI przygotuje dodatkowa wersje draftu na bazie juz wygenerowanego CV.
-                </p>
-
-                {refinementDirty && hasRefinedResumeDraft ? (
-                  <div className="message info">
-                    Zmieniono wskazowki. Ostatnia AI poprawiona wersja nadal jest widoczna, ale kliknij przycisk ponownie, aby ja odswiezyc.
-                  </div>
-                ) : null}
-
-                <div className="form-grid resume-form-grid">
-                  <TagListInput
-                    label="Co warto mocniej wybrzmiec"
-                    helperText="Dodaj terminy, ktore warto lepiej wyeksponowac, o ile sa juz uczciwie pokryte w bazowym drafcie."
-                    emptyText="Brak dodatkowych terminow do mocniejszego podkreslenia."
-                    items={refinementGuidance.must_include_terms}
-                    onChange={(items) => handleRefinementGuidanceListChange("must_include_terms", items)}
-                    placeholder="np. PLC, embedded, commissioning"
-                  />
-                  <TagListInput
-                    label="Czego nie promowac"
-                    helperText="Dodaj obszary, ktore sa prawdziwe, ale nie powinny byc osia tej konkretnej wersji CV."
-                    emptyText="Brak terminow do zdeemfatyzowania."
-                    items={refinementGuidance.avoid_or_deemphasize_terms}
-                    onChange={(items) => handleRefinementGuidanceListChange("avoid_or_deemphasize_terms", items)}
-                    placeholder="np. SAP, support, QA"
-                  />
-                  <TagListInput
-                    label="Jakich sformulowan unikac"
-                    helperText="Te frazy nie powinny pojawic sie w AI poprawionej wersji draftu."
-                    emptyText="Brak zakazanych sformulowan."
-                    items={refinementGuidance.forbidden_claims_or_phrases}
-                    onChange={(items) => handleRefinementGuidanceListChange("forbidden_claims_or_phrases", items)}
-                    placeholder="np. expert, world-class"
-                  />
-                  <TagListInput
-                    label="Jakie skille maja zostac w sekcji skills"
-                    helperText="Jesli wpiszesz tu konkretne skille, AI ograniczy finalna sekcje skills do tej listy."
-                    emptyText="Brak ograniczen dla sekcji skills."
-                    items={refinementGuidance.skills_allowlist}
-                    onChange={(items) => handleRefinementGuidanceListChange("skills_allowlist", items)}
-                    placeholder="np. PLC, Python, TIA Portal"
-                  />
-                  <label className="field section-wide-field">
-                    <span>Dodatkowe wskazowki</span>
-                    <p className="helper-text">
-                      Krotko opisz, jaki kierunek poprawek ma przyjac AI, np. bardziej zwiezle, bardziej technicznie albo mocniej pod embedded automation.
-                    </p>
-                    <textarea
-                      className="form-textarea compact-textarea"
-                      value={refinementGuidance.additional_instructions}
-                      onChange={(event) => handleAdditionalInstructionsChange(event.target.value)}
-                      placeholder="np. Skroc summary, zostaw bardziej techniczny ton i skup sie na automatyce przemyslowej."
-                      disabled={generateLoading || matchLoading || refineLoading}
-                    />
-                  </label>
-                </div>
-
-                <div className="actions resume-refinement-actions">
-                  <button
-                    type="button"
-                    className="primary-button"
-                    onClick={handleRefineClick}
-                    disabled={generateLoading || matchLoading || refineLoading || !hasRefinementGuidance}
-                  >
-                    {refineLoading ? "Przygotowywanie AI poprawki..." : "Popraw draft CV (AI)"}
-                  </button>
-                </div>
-
-                {!hasRefinementGuidance ? (
-                  <p className="helper-text">
-                    Dodaj przynajmniej jedna wskazowke, aby uruchomic opcjonalny AI refinement draftu.
-                  </p>
-                ) : null}
-              </div>
-            </details>
-          ) : null}
-        </section>
-
-        <section className="section-card scroll-panel">
-          <div className="section-header">
-            <div>
-              <h3>Raport zmian</h3>
-              <p className="section-copy">Wyjasnienie, co zostalo uzyte, pominiete i czego nie dodano.</p>
-            </div>
-          </div>
-
-          <div className="scroll-panel-body document-panel-body">
-            {resumeArtifacts?.change_report ? (
-              <>
-                {hasRefinedResumeDraft ? (
-                  <p className="helper-text">
-                    ChangeReport dotyczy bazowego draftu z /resume/generate. Refinement AI nie przelicza tego raportu.
-                  </p>
-                ) : null}
-                <ChangeReportDetails
-                  changeReport={resumeArtifacts.change_report}
-                  matchResult={activeMatchResult}
-                  matchSource={matchSource}
-                  generationMode={resumeArtifacts.generation_mode}
-                  fallbackReason={resumeArtifacts.fallback_reason}
-                  generationNotes={resumeArtifacts.generation_notes}
+      <DocumentWorkspace
+        left={(
+          <>
+            <section className="document-workflow-panel">
+              <div className="document-workflow-list">
+                <ProfileJobSelectionStep
+                  mode={selectionExpanded ? (hasPairSelected ? "editing" : "active") : selectionStepMode}
+                  expanded={selectionExpanded}
+                  profiles={profiles}
+                  jobs={jobs}
+                  selectedProfileId={selectedProfileId}
+                  selectedProfileDetail={selectedProfileDetail}
+                  selectedProfileLoading={selectedProfileLoading}
+                  selectedJobId={selectedJobId}
+                  selectedJobDetail={selectedJobDetail}
+                  selectedJobLoading={selectedJobLoading}
+                  busy={flowIsLoading}
+                  onProfileChange={(profileId) => void loadSelectedProfile(profileId)}
+                  onJobChange={(jobId) => void loadSelectedJob(jobId)}
+                  onRefresh={() => void refreshSelectorData()}
+                  onExpand={() => setExpandedWorkflowStep("selection")}
+                  onContinue={() => setExpandedWorkflowStep("match")}
+                  formatSavedAt={formatSavedAt}
                 />
-              </>
-            ) : (
-              <p className="placeholder">
-                Po wygenerowaniu lub otwarciu draftu tutaj pojawi sie raport zmian i pokrycia wymaganych.
-              </p>
-            )}
-          </div>
-        </section>
-      </div>
+
+                <MatchStep
+                  mode={matchStepMode}
+                  expanded={matchExpanded}
+                  activeMatchResult={activeMatchResult}
+                  matchSourceLabel={matchSourceLabel}
+                  sourceMeta={
+                    matchSource?.savedAt
+                      ? `${matchSourceLabel} · zapisano ${formatSavedAt(matchSource.savedAt)}`
+                      : matchSourceMeta ?? matchSourceLabel
+                  }
+                  strengthsPreview={activeMatchStrengthsPreview}
+                  gapsPreview={activeMatchGapsPreview}
+                  loading={matchLoading}
+                  busy={!canGenerate || matchLoading || generateLoading || refineLoading}
+                  errorText={matchLookupError}
+                  onAnalyze={() => void handleAnalyzeClick()}
+                  onExpand={() => setExpandedWorkflowStep("match")}
+                  onContinue={() => setExpandedWorkflowStep("draft")}
+                />
+
+                <DraftGenerationStep
+                  mode={draftStepMode}
+                  expanded={draftExpanded}
+                  activeMatchResult={activeMatchResult}
+                  resumeArtifacts={resumeArtifacts}
+                  hasRefinedResumeDraft={hasRefinedResumeDraft}
+                  currentResumeDraftRecordId={currentResumeDraftRecordId}
+                  busy={!canGenerate || matchLoading || generateLoading || refineLoading}
+                  loading={generateLoading}
+                  generationModeLabel={draftGenerationModeLabel}
+                  savedAt={resumeArtifacts?.resume_draft_saved_at ? formatSavedAt(resumeArtifacts.resume_draft_saved_at) : null}
+                  onGenerate={() => void handleGenerateClick()}
+                  onExpand={() => setExpandedWorkflowStep("draft")}
+                  onOpenReview={() => setExpandedWorkflowStep("review")}
+                />
+
+                <DraftReviewStep
+                  mode={reviewStepMode}
+                  expanded={reviewExpanded}
+                  resumeArtifacts={resumeArtifacts}
+                  displayedResumeDraft={displayedResumeDraft}
+                  hasRefinedResumeDraft={hasRefinedResumeDraft}
+                  resumeDraftView={resumeDraftView}
+                  onResumeDraftViewChange={setResumeDraftView}
+                  currentResumeDraftRecordId={currentResumeDraftRecordId}
+                  formatSavedAt={formatSavedAt}
+                  activeMatchResult={activeMatchResult}
+                  matchSource={matchSource}
+                  refinementGuidance={refinementGuidance}
+                  refineLoading={refineLoading}
+                  flowIsLoading={generateLoading || matchLoading || refineLoading}
+                  refinementDirty={refinementDirty}
+                  refinementStatusLabel={refinementStatusLabel}
+                  hasRefinementGuidance={hasRefinementGuidance}
+                  onRefineClick={() => void handleRefineClick()}
+                  onRefinementGuidanceListChange={handleRefinementGuidanceListChange}
+                  onAdditionalInstructionsChange={handleAdditionalInstructionsChange}
+                  onExpand={() => setExpandedWorkflowStep("review")}
+                  onCollapse={() => setExpandedWorkflowStep("none")}
+                />
+              </div>
+            </section>
+
+            <ResumeDebugPanel
+              canGenerate={canGenerate}
+              busy={matchLoading || generateLoading || refineLoading}
+              onAnalyzeDebug={() => void handleAnalyzeDebugClick()}
+              lastResumeMatchingHandoff={developerDebugState.lastResumeMatchingHandoff}
+              lastResumeRequestBodyUnavailableReason={developerDebugState.lastResumeRequestBodyUnavailableReason}
+              matchingDebugEnvelope={matchingDebugEnvelope}
+              resumeDebugEnvelope={resumeDebugEnvelope}
+            />
+
+            <div className="resume-inline-note" role="note" aria-label="Informacja o liscie motywacyjnym">
+              Na tym etapie dostępne jest generowanie CV. List motywacyjny zostanie dodany później.
+            </div>
+          </>
+        )}
+        right={(
+          <ResumeContextPanel
+            selectedProfileDetail={selectedProfileDetail}
+            selectedProfileLoading={selectedProfileLoading}
+            selectedJobDetail={selectedJobDetail}
+            selectedJobLoading={selectedJobLoading}
+            hasPairSelected={hasPairSelected}
+            activeMatchResult={activeMatchResult}
+            activeMatchSourceLabel={matchSourceLabel}
+            activeMatchSourceId={activeMatchSourceId}
+            matchSourceMeta={matchSourceMeta}
+            selectedHistoryPreview={selectedHistoryPreview}
+            selectedHistoryPreviewMatchResult={selectedHistoryPreviewMatchResult}
+            selectedHistoryPreviewStats={selectedHistoryPreviewStats}
+            selectedHistoryStrengthsPreview={selectedHistoryStrengthsPreview}
+            selectedHistoryGapsPreview={selectedHistoryGapsPreview}
+            matchHistory={matchHistory}
+            historyLoading={historyLoading}
+            historyError={historyError}
+            historyPreviewId={historyPreviewId}
+            historyPreviewLoadingId={historyPreviewLoadingId}
+            onHistoryPreviewToggle={(id) => void handleHistoryPreviewToggle(id)}
+            resumeDraftHistory={resumeDraftHistory}
+            resumeDraftHistoryLoading={resumeDraftHistoryLoading}
+            resumeDraftHistoryError={resumeDraftHistoryError}
+            currentResumeDraftRecordId={currentResumeDraftRecordId}
+            resumeDraftLoadingId={resumeDraftLoadingId}
+            onSavedResumeDraftOpen={(id) => void handleSavedResumeDraftOpen(id)}
+            canGoToDocument={hasDraftArtifacts}
+            onGoToDocument={onGoToDocument}
+            formatSavedAt={formatSavedAt}
+          />
+        )}
+      />
     </section>
   );
 }

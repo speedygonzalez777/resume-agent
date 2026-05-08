@@ -17,7 +17,7 @@ function buildProfileSummaryItems(profile) {
     { label: "Lokalizacja", value: profile?.personal_info?.location || "brak" },
     { label: "Role docelowe", value: String(Array.isArray(profile?.target_roles) ? profile.target_roles.length : 0) },
     {
-      label: "Doswiadczenie",
+      label: "Doświadczenie",
       value: String(Array.isArray(profile?.experience_entries) ? profile.experience_entries.length : 0),
     },
     { label: "Projekty", value: String(Array.isArray(profile?.project_entries) ? profile.project_entries.length : 0) },
@@ -110,7 +110,7 @@ export default function CandidateProfileDetails({ profile }) {
       </section>
 
       <section className="detail-section">
-        <h4>Doswiadczenie zawodowe</h4>
+        <h4>Doświadczenie zawodowe</h4>
         {experienceEntries.length > 0 ? (
           <div className="record-list">
             {experienceEntries.map((entry) => (
@@ -126,7 +126,7 @@ export default function CandidateProfileDetails({ profile }) {
                 <p className="helper-text">{entry.location || "Brak lokalizacji"}</p>
 
                 <div className="detail-section compact-detail-section">
-                  <h5>Obowiazki</h5>
+                  <h5>Obowiązki</h5>
                   {entry.responsibilities.length > 0 ? (
                     <ul className="detail-list">
                       {entry.responsibilities.map((item, index) => (
@@ -134,7 +134,7 @@ export default function CandidateProfileDetails({ profile }) {
                       ))}
                     </ul>
                   ) : (
-                    <p className="placeholder">Brak zapisanych obowiazkow.</p>
+                    <p className="placeholder">Brak zapisanych obowiązków.</p>
                   )}
                 </div>
 
@@ -152,12 +152,12 @@ export default function CandidateProfileDetails({ profile }) {
                 </div>
 
                 <ChipList items={entry.technologies_used} emptyLabel="Brak technologii." />
-                <ChipList items={entry.keywords} emptyLabel="Brak slow kluczowych." />
+                <ChipList items={entry.keywords} emptyLabel="Brak słów kluczowych." />
               </article>
             ))}
           </div>
         ) : (
-          <p className="placeholder">Brak zapisanych doswiadczen zawodowych.</p>
+          <p className="placeholder">Brak zapisanych doświadczeń zawodowych.</p>
         )}
       </section>
 
@@ -174,7 +174,7 @@ export default function CandidateProfileDetails({ profile }) {
                   </div>
                   {entry.link ? (
                     <a className="detail-link" href={entry.link} target="_blank" rel="noreferrer">
-                      Otworz link
+                      Otwórz link
                     </a>
                   ) : null}
                 </div>
@@ -190,30 +190,30 @@ export default function CandidateProfileDetails({ profile }) {
                       ))}
                     </ul>
                   ) : (
-                    <p className="placeholder">Brak zapisanych rezultatow.</p>
+                    <p className="placeholder">Brak zapisanych rezultatów.</p>
                   )}
                 </div>
 
                 <ChipList items={entry.technologies_used} emptyLabel="Brak technologii." />
-                <ChipList items={entry.keywords} emptyLabel="Brak slow kluczowych." />
+                <ChipList items={entry.keywords} emptyLabel="Brak słów kluczowych." />
               </article>
             ))}
           </div>
         ) : (
-          <p className="placeholder">Brak zapisanych projektow.</p>
+          <p className="placeholder">Brak zapisanych projektów.</p>
         )}
       </section>
 
       <div className="result-columns">
         <section className="detail-section">
-          <h4>Umiejetnosci</h4>
+          <h4>Umiejętności</h4>
           {skillEntries.length > 0 ? (
             <div className="record-list compact-record-list">
               {skillEntries.map((entry, index) => (
                 <article key={`skill-${index}`} className="record-card compact-record-card skill-card">
                   <div className="record-card-header">
                     <div>
-                      <h4>{entry.name || `Umiejetnosc ${index + 1}`}</h4>
+                      <h4>{entry.name || `Umiejętność ${index + 1}`}</h4>
                       <p>{entry.category || "Brak kategorii"}</p>
                     </div>
                     {entry.level ? <span className="chip muted">{entry.level}</span> : null}
@@ -229,23 +229,23 @@ export default function CandidateProfileDetails({ profile }) {
                       <dd>{entry.level || "Brak poziomu"}</dd>
                     </div>
                     <div>
-                      <dt>Lata doswiadczenia</dt>
+                      <dt>Lata doświadczenia</dt>
                       <dd>{entry.years_of_experience != null ? String(entry.years_of_experience) : "Brak danych"}</dd>
                     </div>
                   </dl>
 
                   <div className="skill-card-section">
                     <h5>Aliasy</h5>
-                    <ChipList items={entry.aliases} emptyLabel="Brak aliasow." />
+                    <ChipList items={entry.aliases} emptyLabel="Brak aliasów." />
                   </div>
                 </article>
               ))}
             </div>
           ) : (
-            <p className="placeholder">Brak zapisanych umiejetnosci.</p>
+            <p className="placeholder">Brak zapisanych umiejętności.</p>
           )}
 
-          <h4>Soft skills</h4>
+          <h4>Umiejętności miękkie</h4>
           <ChipList items={softSkillEntries} emptyLabel="Brak zapisanych soft skills." />
 
           <h4>Obszary zainteresowań</h4>
@@ -253,7 +253,7 @@ export default function CandidateProfileDetails({ profile }) {
         </section>
 
         <section className="detail-section">
-          <h4>Jezyki</h4>
+          <h4>Języki</h4>
           {languageEntries.length > 0 ? (
             <ul className="detail-list">
               {languageEntries.map((entry, index) => (
@@ -263,7 +263,7 @@ export default function CandidateProfileDetails({ profile }) {
               ))}
             </ul>
           ) : (
-            <p className="placeholder">Brak zapisanych jezykow.</p>
+            <p className="placeholder">Brak zapisanych języków.</p>
           )}
 
           <h4>Edukacja</h4>
@@ -298,24 +298,24 @@ export default function CandidateProfileDetails({ profile }) {
             ))}
           </div>
         ) : (
-          <p className="placeholder">Brak zapisanych certyfikatow.</p>
+          <p className="placeholder">Brak zapisanych certyfikatów.</p>
         )}
       </section>
 
       <details className="raw-json-toggle">
-        <summary>Reguly zaawansowane</summary>
+        <summary>Zaawansowane zasady profilu</summary>
         <div className="advanced-preview-grid">
           <div>
-            <h4>Zakazane umiejetnosci</h4>
-            <ChipList items={Array.isArray(immutableRules.forbidden_skills) ? immutableRules.forbidden_skills : []} emptyLabel="Brak ograniczen." />
+            <h4>Zakazane umiejętności</h4>
+            <ChipList items={Array.isArray(immutableRules.forbidden_skills) ? immutableRules.forbidden_skills : []} emptyLabel="Brak ograniczeń." />
           </div>
           <div>
             <h4>Zakazane stwierdzenia</h4>
-            <ChipList items={Array.isArray(immutableRules.forbidden_claims) ? immutableRules.forbidden_claims : []} emptyLabel="Brak ograniczen." />
+            <ChipList items={Array.isArray(immutableRules.forbidden_claims) ? immutableRules.forbidden_claims : []} emptyLabel="Brak ograniczeń." />
           </div>
           <div>
             <h4>Zakazane certyfikaty</h4>
-            <ChipList items={Array.isArray(immutableRules.forbidden_certificates) ? immutableRules.forbidden_certificates : []} emptyLabel="Brak ograniczen." />
+            <ChipList items={Array.isArray(immutableRules.forbidden_certificates) ? immutableRules.forbidden_certificates : []} emptyLabel="Brak ograniczeń." />
           </div>
           <div>
             <h4>Zasady edycji</h4>
@@ -332,7 +332,7 @@ export default function CandidateProfileDetails({ profile }) {
         </div>
       </details>
 
-      <RawJsonPanel summary="Raw JSON zapisanego profilu" value={profile} />
+      <RawJsonPanel summary="Szczegóły techniczne profilu" value={profile} />
     </div>
   );
 }

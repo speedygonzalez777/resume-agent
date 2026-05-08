@@ -44,7 +44,6 @@ from app.services.openai_typst_fit_to_page_service import (
 )
 from app.services.openai_resume_typst_fitter_service import (
     ResumeTypstFitterOpenAIError,
-    ResumeTypstFitterResult,
     generate_typst_payload_with_openai,
 )
 from app.services.persistence_service import get_candidate_profile, get_resume_draft
@@ -2629,12 +2628,6 @@ def _resolve_supported_links(
     return linkedin, github
 
 
-def _has_meaningful_draft_experience_entries(resume_draft: ResumeDraft) -> bool:
-    """Return whether the draft already carries at least one usable experience entry."""
-
-    return _count_meaningful_draft_experience_entries(resume_draft) > 0
-
-
 def _count_meaningful_draft_experience_entries(resume_draft: ResumeDraft) -> int:
     """Return how many draft experience entries are complete enough for Typst output."""
 
@@ -2649,12 +2642,6 @@ def _count_meaningful_draft_experience_entries(resume_draft: ResumeDraft) -> int
         if any(_is_substantive_text(bullet) for bullet in entry.bullet_points):
             count += 1
     return count
-
-
-def _has_meaningful_draft_project_entries(resume_draft: ResumeDraft) -> bool:
-    """Return whether the draft already carries at least one usable project entry."""
-
-    return bool(_collect_meaningful_draft_project_keys(resume_draft))
 
 
 def _collect_meaningful_draft_project_keys(resume_draft: ResumeDraft) -> set[str]:

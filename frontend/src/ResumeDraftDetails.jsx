@@ -99,11 +99,11 @@ export default function ResumeDraftDetails({ resumeDraft }) {
 
       <section className="detail-section">
         <h4>Podsumowanie</h4>
-        <p className="detail-text">{resumeDraft?.professional_summary || "Brak summary do pokazania."}</p>
+        <p className="detail-text">{resumeDraft?.professional_summary || "Brak podsumowania do pokazania."}</p>
       </section>
 
       <section className="detail-section">
-        <h4>Kluczowe umiejetnosci</h4>
+        <h4>Kluczowe umiejętności</h4>
         {selectedSkills.length > 0 ? (
           <div className="chip-row">
             {selectedSkills.map((skill) => (
@@ -113,13 +113,13 @@ export default function ResumeDraftDetails({ resumeDraft }) {
             ))}
           </div>
         ) : (
-          <p className="placeholder">Brak wybranych umiejetnosci.</p>
+          <p className="placeholder">Brak wybranych umiejętności.</p>
         )}
       </section>
 
       {selectedSoftSkillEntries.length > 0 ? (
         <section className="detail-section">
-          <h4>Soft skills</h4>
+          <h4>Umiejętności miękkie</h4>
           <div className="chip-row">
             {selectedSoftSkillEntries.map((skill) => (
               <span key={skill} className="chip muted">
@@ -132,7 +132,7 @@ export default function ResumeDraftDetails({ resumeDraft }) {
 
       {selectedInterestEntries.length > 0 ? (
         <section className="detail-section">
-          <h4>Obszary zainteresowan</h4>
+          <h4>Obszary zainteresowań</h4>
           <div className="chip-row">
             {selectedInterestEntries.map((interest) => (
               <span key={interest} className="chip muted">
@@ -144,7 +144,7 @@ export default function ResumeDraftDetails({ resumeDraft }) {
       ) : null}
 
       <section className="detail-section">
-        <h4>Wybrane doswiadczenia</h4>
+        <h4>Wybrane doświadczenia</h4>
         {selectedExperienceEntries.length > 0 ? (
           <div className="record-list compact-record-list">
             {selectedExperienceEntries.map((entry) => (
@@ -158,11 +158,11 @@ export default function ResumeDraftDetails({ resumeDraft }) {
                   </div>
                 </div>
 
-                {renderStringList(entry.bullet_points || [], "Brak bullet points dla tego wpisu.")}
+                {renderStringList(entry.bullet_points || [], "Brak punktów dla tego wpisu.")}
 
                 {Array.isArray(entry.highlighted_keywords) && entry.highlighted_keywords.length > 0 ? (
                   <div className="detail-section compact-detail-section">
-                    <h6>Wyeksponowane keywords</h6>
+                    <h6>Wyeksponowane słowa kluczowe</h6>
                     <div className="chip-row">
                       {entry.highlighted_keywords.map((keyword) => (
                         <span key={keyword} className="chip muted">
@@ -176,7 +176,7 @@ export default function ResumeDraftDetails({ resumeDraft }) {
             ))}
           </div>
         ) : (
-          <p className="placeholder">Brak doswiadczen wybranych do tego draftu.</p>
+          <p className="placeholder">Brak doświadczeń wybranych do tego draftu.</p>
         )}
       </section>
 
@@ -193,16 +193,16 @@ export default function ResumeDraftDetails({ resumeDraft }) {
                   </div>
                   {entry.link ? (
                     <a className="detail-link" href={entry.link} target="_blank" rel="noreferrer">
-                      Project link
+                      Link do projektu
                     </a>
                   ) : null}
                 </div>
 
-                {renderStringList(entry.bullet_points || [], "Brak bullet points dla tego projektu.")}
+                {renderStringList(entry.bullet_points || [], "Brak punktów dla tego projektu.")}
 
                 {Array.isArray(entry.highlighted_keywords) && entry.highlighted_keywords.length > 0 ? (
                   <div className="detail-section compact-detail-section">
-                    <h6>Wyeksponowane keywords</h6>
+                    <h6>Wyeksponowane słowa kluczowe</h6>
                     <div className="chip-row">
                       {entry.highlighted_keywords.map((keyword) => (
                         <span key={keyword} className="chip muted">
@@ -216,7 +216,7 @@ export default function ResumeDraftDetails({ resumeDraft }) {
             ))}
           </div>
         ) : (
-          <p className="placeholder">Brak projektow wybranych do tego draftu.</p>
+          <p className="placeholder">Brak projektów wybranych do tego draftu.</p>
         )}
       </section>
 
@@ -227,19 +227,19 @@ export default function ResumeDraftDetails({ resumeDraft }) {
         </section>
 
         <section className="detail-section">
-          <h4>Jezyki</h4>
-          {renderStringList(selectedLanguageEntries, "Brak jezykow wybranych do draftu.")}
+          <h4>Języki</h4>
+          {renderStringList(selectedLanguageEntries, "Brak języków wybranych do draftu.")}
         </section>
       </div>
 
       <div className="result-columns">
         <section className="detail-section">
           <h4>Certyfikaty</h4>
-          {renderStringList(selectedCertificateEntries, "Brak certyfikatow wybranych do draftu.")}
+          {renderStringList(selectedCertificateEntries, "Brak certyfikatów wybranych do draftu.")}
         </section>
 
         <section className="detail-section">
-          <h4>Wybrane keywords</h4>
+          <h4>Wybrane słowa kluczowe</h4>
           {selectedKeywords.length > 0 ? (
             <div className="chip-row">
               {selectedKeywords.map((keyword) => (
@@ -249,13 +249,13 @@ export default function ResumeDraftDetails({ resumeDraft }) {
               ))}
             </div>
           ) : (
-            <p className="placeholder">Brak wybranych keywords w draftcie.</p>
+            <p className="placeholder">Brak wybranych słów kluczowych w drafcie.</p>
           )}
         </section>
       </div>
 
       <section className="detail-section">
-        <h4>Uzyte keywords</h4>
+        <h4>Użyte słowa kluczowe</h4>
         {keywordUsage.length > 0 ? (
           <div className="chip-row">
             {keywordUsage.map((keyword) => (
@@ -265,14 +265,14 @@ export default function ResumeDraftDetails({ resumeDraft }) {
             ))}
           </div>
         ) : (
-          <p className="placeholder">Brak zarejestrowanych keywords w draftcie.</p>
+          <p className="placeholder">Brak zarejestrowanych słów kluczowych w drafcie.</p>
         )}
         <p className="helper-text">
-          To pole pomaga szybko sprawdzic, czy AI refinement nie rozmywa keywordow uzytych w dokumencie.
+          To pole pomaga szybko sprawdzić, czy poprawa AI nie rozmywa słów kluczowych użytych w dokumencie.
         </p>
       </section>
 
-      <RawJsonPanel summary="Raw JSON ResumeDraft" value={resumeDraft} />
+      <RawJsonPanel summary="Szczegóły techniczne draftu CV" value={resumeDraft} />
     </div>
   );
 }
